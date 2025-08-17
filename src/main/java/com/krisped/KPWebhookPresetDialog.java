@@ -80,10 +80,12 @@ public class KPWebhookPresetDialog extends JDialog
     private HighlightCategoryPanel outlinePanel;
     private HighlightCategoryPanel tilePanel;
     private HighlightCategoryPanel hullPanel;
-    private HighlightCategoryPanel minimapPanel;
+    private HighlightCategoryPanel minimapPanel; // restored minimap panel
     private TextCategoryPanel textOverPanel;
     private TextCategoryPanel textCenterPanel;
     private TextCategoryPanel textUnderPanel;
+    private OverlayTextPanel overlayTextPanel; // new simple overlay text panel
+    private InfoboxCategoryPanel infoboxPanel; // new infobox panel
     // Screenshot settings removed - keeping it simple
     /* -------- Info Tab -------- */
     private JTextArea infoArea;
@@ -103,6 +105,8 @@ public class KPWebhookPresetDialog extends JDialog
             "#  TEXT_OVER <text>         - Text above player\n" +
             "#  TEXT_CENTER <text>       - Text centered on player\n" +
             "#  TEXT_UNDER <text>        - Text under feet\n" +
+            "#  OVERLAY_TEXT <text>      - Screen overlay box (top center)\n" +
+            "#  INFOBOX <id> [message]     Show icon with optional custom tooltip text\n" +
             "#  SLEEP <ms>               - Millisecond delay in sequence\n" +
             "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
             "#  STOP                     - Stop all active sequences\n" +
@@ -290,6 +294,14 @@ public class KPWebhookPresetDialog extends JDialog
                 existing!=null && Boolean.TRUE.equals(existing.getTextCenterItalic()),
                 existing!=null && Boolean.TRUE.equals(existing.getTextCenterUnderline()),
                 "TEXT_CENTER");
+        overlayTextPanel = new OverlayTextPanel(
+                existing!=null?existing.getOverlayTextDuration():100,
+                existing!=null?existing.getOverlayTextSize():16,
+                existing!=null?existing.getOverlayTextColor():"#FFFFFF",
+                "OVERLAY_TEXT");
+        infoboxPanel = new InfoboxCategoryPanel(
+                existing!=null?existing.getInfoboxDuration():100,
+                "INFOBOX");
 
         // Highlight group header
         JLabel hlHeader = new JLabel("Highlight");
@@ -309,6 +321,13 @@ public class KPWebhookPresetDialog extends JDialog
         settingsRoot.add(new CollapsibleSection(textUnderPanel));
         settingsRoot.add(new CollapsibleSection(textOverPanel));
         settingsRoot.add(new CollapsibleSection(textCenterPanel));
+        settingsRoot.add(new CollapsibleSection(overlayTextPanel));
+        settingsRoot.add(Box.createVerticalStrut(6));
+        JLabel ibHeader = new JLabel("Infobox");
+        ibHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
+        ibHeader.setBorder(new EmptyBorder(4,2,2,2));
+        settingsRoot.add(ibHeader);
+        settingsRoot.add(new CollapsibleSection(infoboxPanel));
 
         return new JScrollPane(settingsRoot);
     }
@@ -322,40 +341,61 @@ public class KPWebhookPresetDialog extends JDialog
         infoArea.setText(
                 "KP Webhook Plugin - Commands & Triggers\n" +
                         "====================================\n\n" +
-                        "Commands:\n" +
-                        "  NOTIFY <text>                Chat message\n" +
-                        "  WEBHOOK <text>               Send webhook message\n" +
-                        "  SCREENSHOT [text]            Upload screenshot (optional text)\n" +
-                        "  HIGHLIGHT_OUTLINE            Outline local player\n" +
-                        "  HIGHLIGHT_TILE               Highlight tile under player\n" +
-                        "  HIGHLIGHT_HULL               Player hull highlight\n" +
-                        "  HIGHLIGHT_MINIMAP            (Reserved / future)\n" +
-                        "  TEXT_OVER <text>             Text above player\n" +
-                        "  TEXT_CENTER <text>           Text centered on player\n" +
-                        "  TEXT_UNDER <text>            Text under player feet\n" +
-                        "  SLEEP <ms>                   Millisecond delay\n" +
-                        "  TICK [n]                     Wait n ticks (default 1)\n" +
-                        "  STOP                         Cancel all active sequences\n\n" +
-                        "Triggers:\n" +
-                        "  MANUAL                       Trigger manually from UI button\n" +
-                        "  STAT                         When a stat matches condition (LEVEL_UP / ABOVE / BELOW)\n" +
-                        "  WIDGET                       When a widget group (and optional child) loads\n" +
-                        "  PLAYER_SPAWN                 When a player spawns matching: ALL / specific name / combat +/- range\n" +
-                        "  PLAYER_DESPAWN               When a player despawns matching same conditions as spawn\n" +
-                        "  ANIMATION_SELF               When your player performs a specific animation ID\n" +
-                        "  MESSAGE                      When a chat message of a given ChatMessageType ID appears (ID only)\n" +
-                        "  VARBIT                       When a specific varbit changes to a target value\n" +
-                        "  VARPLAYER                    When a specific varplayer changes to a target value\n\n" +
-                        "Player Trigger Matching:\n" +
-                        "  ALL: every player\n" +
-                        "  Specific name: case-insensitive exact name match\n" +
-                        "  Combat +/-: players whose combat level is within +/- range of your combat\n\n" +
-                        "MESSAGE Trigger:\n" +
-                        "  Only message ID is used nå (tekstfilter fjernet). Finn ID ved å slå opp ChatMessageType ordinal.\n\n" +
-                        "VARBIT/VARPLAYER Triggers:\n" +
-                        "  Specify both ID and target value (e.g. varbit 1234 = 1)\n" +
-                        "  Triggers when the varbit/varplayer changes to exactly that value\n\n" +
-                        "Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n"
+                        "Commands (one per line in the Commands box):\n" +
+                        "  NOTIFY <text>               In‑game chat notification (tokens allowed)\n" +
+                        "  WEBHOOK <text>              Send text to effective webhook (default/custom)\n" +
+                        "  SCREENSHOT [text]           Capture client & upload (optional caption)\n" +
+                        "  HIGHLIGHT_OUTLINE           Outline local player (duration / blink / color in Settings)\n" +
+                        "  HIGHLIGHT_TILE              Highlight tile under local player\n" +
+                        "  HIGHLIGHT_HULL              Player hull highlight\n" +
+                        "  HIGHLIGHT_MINIMAP           Minimap marker (reserved – still configurable)\n" +
+                        "  TEXT_OVER <text>            Overhead text above player\n" +
+                        "  TEXT_CENTER <text>          Centered text on player position\n" +
+                        "  TEXT_UNDER <text>           Text under player feet\n" +
+                        "  OVERLAY_TEXT <text>         Screen overlay text box (top center). Style (color/size/duration) set in Settings.\n" +
+                        "  INFOBOX <id> [message]     Show icon: positive=item ID, negative=sprite ID; optional tooltip text after id\n" +
+                        "  SLEEP <ms>                  Millisecond delay in a sequence\n" +
+                        "  TICK [n]                    Wait n game ticks (default 1) inside a sequence\n" +
+                        "  STOP                        Stop all active sequences & visuals\n" +
+                        "\n" +
+                        "Triggers (choose in Preset tab):\n" +
+                        "  MANUAL                      Only runs when manually triggered\n" +
+                        "  STAT                        Skill condition (LEVEL_UP / ABOVE / BELOW threshold)\n" +
+                        "  WIDGET                      When widget group (and optional child) appears\n" +
+                        "  PLAYER_SPAWN                Player spawn (ALL / name / combat +/- range)\n" +
+                        "  PLAYER_DESPAWN              Player despawn (same matching rules)\n" +
+                        "  ANIMATION_SELF              Your player performs specific animation ID\n" +
+                        "  MESSAGE                     Chat message type ID occurs (use ordinal)\n" +
+                        "  VARBIT                      Varbit changes to value\n" +
+                        "  VARPLAYER                   Varplayer changes to value\n" +
+                        "  TICK                        Re-applies visual commands every tick (durations ignored)\n" +
+                        "\n" +
+                        "Tokens available in text commands: \n" +
+                        "  {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n" +
+                        "\n" +
+                        "INFOBOX Usage & Testing:\n" +
+                        "  1. Open or create a preset.\n" +
+                        "  2. In Commands area add a line: INFOBOX 4151 YOU NEED ABYSSAL WHIP FOR THIS RUN\n" +
+                        "     Or a sprite: INFOBOX -502 Custom sprite tooltip text\n" +
+                        "  3. Open Settings > Infobox section: set Duration (ticks).\n" +
+                        "  4. Choose a Trigger (e.g. MANUAL) and Save.\n" +
+                        "  5. Trigger preset – icon appears; hover for your custom tooltip.\n" +
+                        "  6. Multiple INFOBOX lines stack.\n" +
+                        "\n" +
+                        "Durations: Visual commands use configured durations unless Trigger is TICK (then they refresh).\n" +
+                        "Blink: Toggles visibility each tick for that visual element.\n" +
+                        "Color: Applies tint to text/highlight; for INFOBOX it tints (or colorizes overlay label if implemented).\n" +
+                        "\n" +
+                        "Examples:\n" +
+                        "  NOTIFY Level up in {{stat}}!\n" +
+                        "  HIGHLIGHT_OUTLINE\n" +
+                        "  INFOBOX 4151 YOU NEED ABYSSAL WHIP FOR THIS RUN\n" +
+                        "  SLEEP 500\n" +
+                        "  INFOBOX -502\n" +
+                        "  TEXT_OVER Grats {{player}}!\n" +
+                        "  OVERLAY_TEXT Low health! Eat food now!\n" +
+                        "\n" +
+                        "STOP command immediately clears active highlight/text sequences, overlay texts and infobox entries.\n"
         );
         p.add(new JScrollPane(infoArea), BorderLayout.CENTER);
         return p;
@@ -631,7 +671,7 @@ public class KPWebhookPresetDialog extends JDialog
                 .textCenterSize(textCenterPanel.getSizeValue())
                 .textCenterDuration(textCenterPanel.getDuration())
                 .textCenterBold(textCenterPanel.isBold())
-                .textCenterItalic(textCenterPanel.isItalic())
+                .textCenterItalic(textCenterPanel.isItalic()) // corrected
                 .textCenterUnderline(textCenterPanel.isUnderline())
                 .textUnderColor(textUnderPanel.getColorHex())
                 .textUnderBlink(textUnderPanel.isBlink())
@@ -640,6 +680,10 @@ public class KPWebhookPresetDialog extends JDialog
                 .textUnderBold(textUnderPanel.isBold())
                 .textUnderItalic(textUnderPanel.isItalic())
                 .textUnderUnderline(textUnderPanel.isUnderline())
+                .overlayTextDuration(overlayTextPanel.getDuration())
+                .overlayTextColor(overlayTextPanel.getColorHex())
+                .overlayTextSize(overlayTextPanel.getSizeValue())
+                .infoboxDuration(infoboxPanel.getDuration())
                 .playerConfig(playerCfg)
                 .animationConfig(animationCfg)
                 .messageConfig(messageCfg)
@@ -1162,7 +1206,7 @@ public class KPWebhookPresetDialog extends JDialog
     {
         CardLayout cl = (CardLayout) (triggerCards.getLayout());
         String sel = (String) triggerTypeBox.getSelectedItem();
-        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel))
+        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) || KPWebhookPreset.TriggerType.TICK.name().equals(sel))
         {
             cl.show(triggerCards, "NONE");
         }
@@ -1174,11 +1218,31 @@ public class KPWebhookPresetDialog extends JDialog
         {
             cl.show(triggerCards, sel);
         }
-        // keep panel always visible for stable layout
         if (triggerDetailsPanel != null && !triggerDetailsPanel.isVisible())
             triggerDetailsPanel.setVisible(true);
         if (triggerDetailsPanel != null) { triggerDetailsPanel.revalidate(); triggerDetailsPanel.repaint(); }
         updateStatEnable();
+        applyTickDisable();
+    }
+
+    private void applyTickDisable() {
+        boolean isTick = KPWebhookPreset.TriggerType.TICK.name().equals(triggerTypeBox.getSelectedItem());
+        // When TICK trigger selected: disable config panels (durations irrelevant). When leaving: re-enable.
+        setPanelEnabled(outlinePanel, !isTick);
+        setPanelEnabled(tilePanel, !isTick);
+        setPanelEnabled(hullPanel, !isTick);
+        setPanelEnabled(minimapPanel, !isTick);
+        setPanelEnabled(textOverPanel, !isTick);
+        setPanelEnabled(textCenterPanel, !isTick);
+        setPanelEnabled(textUnderPanel, !isTick);
+        setPanelEnabled(overlayTextPanel, !isTick);
+    }
+    private void setPanelEnabled(Component c, boolean enabled) {
+        if (c == null) return;
+        c.setEnabled(enabled);
+        if (c instanceof Container) {
+            for (Component ch : ((Container)c).getComponents()) setPanelEnabled(ch, enabled);
+        }
     }
 
     private void updateWebhookEnable()
@@ -1199,5 +1263,73 @@ public class KPWebhookPresetDialog extends JDialog
         else
             cl.show(levelHolderCard, LEVEL_CARD_EMPTY);
     }
-}
 
+    /** Infobox panel (Duration only). */
+    private static class InfoboxCategoryPanel extends JPanel {
+        private final JSpinner durationSpinner;
+        InfoboxCategoryPanel(int duration, String title) {
+            super(new GridBagLayout());
+            setBorder(new TitledBorder(title));
+            setOpaque(false);
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(3,4,3,4);
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST; c.weightx=1; int y=0;
+            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(durLbl,c);
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,10000,1));
+            Dimension ds = durationSpinner.getPreferredSize();
+            durationSpinner.setPreferredSize(new Dimension(70, ds.height));
+            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
+            durRow.add(durationSpinner); durRow.add(new JLabel("ticks"));
+            c.gridx=1; add(durRow,c); y++;
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
+        }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        // Backwards compatibility methods (no-op / defaults)
+        boolean isBlink(){ return false; }
+        String getColorHex(){ return "#FFFFFF"; }
+    }
+
+    private static class OverlayTextPanel extends JPanel {
+        private final JSpinner durationSpinner;
+        private final JSpinner sizeSpinner;
+        private final ColorPreview colorPreview;
+        private Color selectedColor;
+        OverlayTextPanel(int duration, int size, String colorHex, String title) {
+            super(new GridBagLayout());
+            setBorder(new TitledBorder(title));
+            setOpaque(false);
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(3,4,3,4);
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST;
+            c.weightx = 1; int y=0;
+            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(durLbl,c);
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,10000,1));
+            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("ticks"));
+            c.gridx=1; add(durRow,c); y++;
+            JLabel sizeLbl = new JLabel("Size"); sizeLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(sizeLbl,c);
+            sizeSpinner = new JSpinner(new SpinnerNumberModel(size,8,72,1));
+            c.gridx=1; add(sizeSpinner,c); y++;
+            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(colorLbl,c);
+            selectedColor = HighlightCategoryPanel.parse(colorHex, Color.WHITE);
+            colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
+            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false);
+            JButton customBtn = new JButton("Custom"); customBtn.setMargin(new Insets(2,6,2,6)); customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            customBtn.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor); if (picked!=null) setSelectedColor(picked); });
+            colorRow.add(colorPreview); colorRow.add(customBtn);
+            c.gridx=1; add(colorRow,c); y++;
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
+        }
+        private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
+        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+    }
+}

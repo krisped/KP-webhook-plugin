@@ -20,7 +20,8 @@ public class KPWebhookPreset
         ANIMATION_SELF,
         MESSAGE,
         VARBIT,
-        VARPLAYER
+        VARPLAYER,
+        TICK // new continuous trigger
     }
 
     public enum StatMode
@@ -240,6 +241,22 @@ public class KPWebhookPreset
     @Builder.Default
     private Boolean textUnderUnderline = false;
 
+    // =========== Overlay TEXT (OVERLAY_TEXT) settings ===========
+    @Builder.Default
+    private Integer overlayTextDuration = 100; // ticks
+    @Builder.Default
+    private String overlayTextColor = "#FFFFFF";
+    @Builder.Default
+    private Integer overlayTextSize = 16;
+
+    // =========== InfoBox ICON settings ===========
+    @Builder.Default
+    private Integer infoboxDuration = 100; // ticks
+    @Builder.Default
+    private Boolean infoboxBlink = false; // toggle icon visibility each tick
+    @Builder.Default
+    private String infoboxColor = "#FFFFFF"; // optional border / future use
+
 
     public String prettyTrigger()
     {
@@ -346,6 +363,8 @@ public class KPWebhookPreset
                     varplayerResult += " = " + varplayerConfig.getValue();
                 }
                 return varplayerResult;
+            case TICK:
+                return "TICK (continuous)";
             default:
                 return "?";
         }

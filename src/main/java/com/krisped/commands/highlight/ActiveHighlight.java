@@ -14,5 +14,6 @@ public class ActiveHighlight {
     private int width;
     private boolean blink; // toggles visibility each tick
     private boolean visiblePhase;
+    private Integer ruleId; // source rule for persistence (TICK trigger)
+    private boolean persistent; // if true, manager refreshes instead of normal decay
 }
-

@@ -3,10 +3,8 @@ package com.krisped.commands.highlight;
 import lombok.Getter;
 
 import javax.inject.Singleton;
-import java.awt.*;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.awt.Color; // narrowed import to avoid clash with java.awt.List
+import java.util.*;
 
 @Singleton
 public class HighlightManager {
@@ -17,7 +15,52 @@ public class HighlightManager {
         if (duration <= 0) duration = 1;
         if (width <= 0) width = 1;
         Color c = parseColor(colorHex, "#FFFF00");
-        activeHighlights.add(new ActiveHighlight(type, duration, c, width, blink, true));
+        activeHighlights.add(new ActiveHighlight(type, duration, c, width, blink, true, null, false));
+    }
+
+    /** Upsert a persistent highlight keyed by (ruleId,type). */
+    public void upsertHighlight(int ruleId, HighlightType type, int width, String colorHex, boolean blink) {
+        if (width <= 0) width = 1;
+        Color c = parseColor(colorHex, "#FFFF00");
+        ActiveHighlight found = null;
+        for (ActiveHighlight h : activeHighlights) {
+            if (Boolean.TRUE.equals(h.isPersistent()) && h.getRuleId()!=null && h.getRuleId()==ruleId && h.getType()==type) {
+                found = h; break;
+            }
+        }
+        if (found == null) {
+            // remainingTicks small (2) and persistent=true so tick() will not decrement below 1
+            activeHighlights.add(new ActiveHighlight(type, 2, c, width, blink, true, ruleId, true));
+        } else {
+            found.setColor(c);
+            found.setWidth(width);
+            found.setBlink(blink);
+            found.setRemainingTicks(2); // refresh lifespan
+            // Keep steady visible when not blinking
+            if (!blink) found.setVisiblePhase(true);
+        }
+    }
+
+    /** Remove all persistent highlights belonging to a specific rule. */
+    public void removePersistentByRule(int ruleId) {
+        Iterator<ActiveHighlight> it = activeHighlights.iterator();
+        while (it.hasNext()) {
+            ActiveHighlight h = it.next();
+            if (h.isPersistent() && h.getRuleId()!=null && h.getRuleId()==ruleId) {
+                it.remove();
+            }
+        }
+    }
+
+    /** Keep only persistent highlights whose ruleId is in active set. */
+    public void cleanupPersistent(Set<Integer> activeRuleIds) {
+        Iterator<ActiveHighlight> it = activeHighlights.iterator();
+        while (it.hasNext()) {
+            ActiveHighlight h = it.next();
+            if (h.isPersistent() && (h.getRuleId()==null || !activeRuleIds.contains(h.getRuleId()))) {
+                it.remove();
+            }
+        }
     }
 
     public void tick() {
@@ -25,13 +68,21 @@ public class HighlightManager {
         Iterator<ActiveHighlight> it = activeHighlights.iterator();
         while (it.hasNext()) {
             ActiveHighlight h = it.next();
+            // First handle blink visibility so both persistent & non-persistent stay in sync with game ticks
+            if (h.isBlink()) {
+                h.setVisiblePhase(!h.isVisiblePhase());
+            } else if (!h.isVisiblePhase()) {
+                // Ensure visible when not blinking
+                h.setVisiblePhase(true);
+            }
+
+            if (h.isPersistent()) {
+                // Persistent entries are externally refreshed; never decay here
+                continue;
+            }
             h.setRemainingTicks(h.getRemainingTicks() - 1);
             if (h.getRemainingTicks() <= 0) {
                 it.remove();
-                continue;
-            }
-            if (h.isBlink()) {
-                h.setVisiblePhase(!h.isVisiblePhase());
             }
         }
     }
@@ -53,4 +104,3 @@ public class HighlightManager {
         return Color.YELLOW;
     }
 }
-

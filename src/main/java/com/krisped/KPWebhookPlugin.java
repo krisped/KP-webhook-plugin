@@ -22,6 +22,11 @@ import com.krisped.commands.highlight.HighlightManager;
 import com.krisped.commands.highlight.HighlightCommandHandler;
 import com.krisped.commands.highlight.HighlightOverlay;
 import com.krisped.commands.highlight.MinimapHighlightOverlay;
+import com.krisped.triggers.tick.TickTriggerService;
+import com.krisped.commands.infobox.InfoboxCommandHandler; // retain handler
+import com.krisped.commands.overlaytext.OverlayTextManager;
+import com.krisped.commands.overlaytext.OverlayTextOverlay;
+import com.krisped.commands.overlaytext.OverlayTextCommandHandler;
 
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
@@ -39,8 +44,8 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, ANIMATION_SELF, MESSAGE, VARBIT, VARPLAYER. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, SLEEP, TICK, STOP.",
-        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","varbit","varplayer"}
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, ANIMATION_SELF, MESSAGE, VARBIT, VARPLAYER, TICK. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","varbit","varplayer","tick","overlay"}
 )
 public class KPWebhookPlugin extends Plugin
 {
@@ -56,6 +61,11 @@ public class KPWebhookPlugin extends Plugin
     @Inject private HighlightCommandHandler highlightCommandHandler;
     @Inject private HighlightOverlay highlightOverlay; // below widgets
     @Inject private MinimapHighlightOverlay minimapHighlightOverlay; // minimap only
+    @Inject private TickTriggerService tickTriggerService;
+    @Inject private InfoboxCommandHandler infoboxCommandHandler; // unified handler
+    @Inject private OverlayTextManager overlayTextManager;
+    @Inject private OverlayTextOverlay overlayTextOverlay;
+    @Inject private OverlayTextCommandHandler overlayTextCommandHandler;
 
     private KPWebhookPanel panel;
     private NavigationButton navButton;
@@ -88,6 +98,7 @@ public class KPWebhookPlugin extends Plugin
         boolean bold;
         boolean italic;
         boolean underline;
+        String key; // optional unique key for persistent (TICK) texts
     }
     private final java.util.List<ActiveOverheadText> overheadTexts = new ArrayList<>();
     private final Map<Integer,Integer> lastVarpValues = new HashMap<>(); // cache for VARPLAYER polling
@@ -138,6 +149,7 @@ public class KPWebhookPlugin extends Plugin
         clientToolbar.addNavigation(navButton);
         overlayManager.add(highlightOverlay);
         overlayManager.add(minimapHighlightOverlay);
+        overlayManager.add(overlayTextOverlay); // register overlay text boxes
 
         captureInitialRealLevels();
         storage = new KPWebhookStorage(configManager, gson);
@@ -156,12 +168,15 @@ public class KPWebhookPlugin extends Plugin
     {
         overlayManager.remove(highlightOverlay);
         overlayManager.remove(minimapHighlightOverlay);
+        overlayManager.remove(overlayTextOverlay);
         clientToolbar.removeNavigation(navButton);
         saveAllPresets();
         rules.clear();
         panel = null;
         highlightManager.clear();
         overheadTexts.clear();
+        if (infoboxCommandHandler != null) infoboxCommandHandler.clearAll(); // clear native infoboxes (if any used earlier)
+        if (overlayTextManager != null) overlayTextManager.clear();
     }
 
     public String getDefaultWebhook()
@@ -182,6 +197,12 @@ public class KPWebhookPlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick tick)
     {
+        // Continuous TICK trigger processing via service
+        if (tickTriggerService != null)
+        {
+            tickTriggerService.process(rules, overheadTexts);
+        }
+
         // Process sequences (delays and actions)
         if (!activeSequences.isEmpty())
         {
@@ -234,6 +255,8 @@ public class KPWebhookPlugin extends Plugin
 
         // Replace manual highlight tick processing with manager
         highlightManager.tick();
+        overlayTextManager.tick();
+        if (infoboxCommandHandler != null) infoboxCommandHandler.tick(); // tick INFOBOX icons
 
         if (!overheadTexts.isEmpty())
         {
@@ -241,21 +264,19 @@ public class KPWebhookPlugin extends Plugin
             while (it.hasNext())
             {
                 ActiveOverheadText t = it.next();
-                // Process blink BEFORE duration decrement so short-lived texts can still blink at least once
+                // Blink: toggle visibility every game tick for consistent flashing
                 if (t.blink)
                 {
-                    t.blinkCounter++;
-                    if (t.blinkCounter >= t.blinkInterval)
-                    {
-                        t.blinkCounter = 0;
-                        t.visiblePhase = !t.visiblePhase;
-                        log.info("Text '{}' blink toggle - visiblePhase: {}, remainingTicks: {}", t.text, t.visiblePhase, t.remainingTicks);
-                    }
+                    t.visiblePhase = !t.visiblePhase;
                 }
+                else
+                {
+                    t.visiblePhase = true; // ensure visible if not blinking
+                }
+                // Duration countdown after visibility decision to keep phases even
                 t.remainingTicks--;
                 if (t.remainingTicks <= 0)
                 {
-                    log.info("Removing expired text: '{}'", t.text);
                     it.remove();
                 }
             }
@@ -461,7 +482,6 @@ public class KPWebhookPlugin extends Plugin
             java.util.regex.Matcher m = P_TEXT_UNDER.matcher(line);
             if (m.find()) {
                 String text = expand(m.group(1).trim(), ctx);
-                // Use preset settings from UI - no inline parameter parsing
                 addOverheadTextFromPreset(text, "Under", rule);
             }
         }
@@ -469,7 +489,6 @@ public class KPWebhookPlugin extends Plugin
             java.util.regex.Matcher m = P_TEXT_OVER.matcher(line);
             if (m.find()) {
                 String text = expand(m.group(1).trim(), ctx);
-                // Use preset settings from UI - no inline parameter parsing
                 addOverheadTextFromPreset(text, "Above", rule);
             }
         }
@@ -477,10 +496,11 @@ public class KPWebhookPlugin extends Plugin
             java.util.regex.Matcher m = P_TEXT_CENTER.matcher(line);
             if (m.find()) {
                 String text = expand(m.group(1).trim(), ctx);
-                // Use preset settings from UI - no inline parameter parsing
                 addOverheadTextFromPreset(text, "Center", rule);
             }
         }
+        else if (overlayTextCommandHandler.handle(line, rule)) { /* OVERLAY_TEXT handled */ }
+        else if (infoboxCommandHandler.handle(line, rule, ctx)) { /* infobox handled */ }
         else if (highlightCommandHandler.handle(upper, rule)) { /* highlight handled */ }
         else { /* unknown command */ }
     }
@@ -677,20 +697,12 @@ public class KPWebhookPlugin extends Plugin
         t.position = position;
         t.remainingTicks = Math.max(1, duration);
         t.visiblePhase = true;
+        // Force per-tick blinking for highlight/text consistency
+        t.blinkInterval = 1;
         t.blinkCounter = 0;
-        t.blinkInterval = Math.max(1, blinkInterval);
         t.bold = bold;
         t.italic = italic;
         t.underline = underline;
-        // Adjust blink timing so that short-lived texts still visibly blink
-        if (t.blink) {
-            if (t.blinkInterval >= t.remainingTicks) {
-                // Aim for at least 2 visible phases
-                t.blinkInterval = Math.max(1, Math.max(1, t.remainingTicks / 2));
-            }
-            // Start mid-cycle to get an earlier first toggle if interval >1
-            t.blinkCounter = t.blinkInterval / 2;
-        }
         overheadTexts.add(t);
     }
 
@@ -698,16 +710,39 @@ public class KPWebhookPlugin extends Plugin
     public KPWebhookPreset find(int id) { return rules.stream().filter(r -> r.getId()==id).findFirst().orElse(null); }
     public void addRule(KPWebhookPreset rule) { rule.setId(nextId++); rules.add(rule); savePreset(rule); refreshPanelTable(); }
     public void updateRule(KPWebhookPreset rule) { savePreset(rule); refreshPanelTable(); }
-    public void deleteRule(int id) { KPWebhookPreset r = find(id); if (r!=null) { rules.remove(r); storage.delete(r); refreshPanelTable(); } }
-    public void toggleActive(int id) { KPWebhookPreset r = find(id); if (r!=null) { r.setActive(!r.isActive()); savePreset(r); } }
+    private void cleanupTickArtifacts(int ruleId) {
+        try { highlightManager.removePersistentByRule(ruleId); } catch (Exception ignored) {}
+        if (overheadTexts != null && !overheadTexts.isEmpty()) {
+            String prefix = "RULE_" + ruleId + "_";
+            overheadTexts.removeIf(t -> t.getKey() != null && t.getKey().startsWith(prefix));
+        }
+    }
+    public void deleteRule(int id) {
+        KPWebhookPreset r = find(id);
+        if (r!=null) {
+            if (r.getTriggerType() == KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
+            rules.remove(r); storage.delete(r); refreshPanelTable();
+        }
+    }
+    public void toggleActive(int id) {
+        KPWebhookPreset r = find(id);
+        if (r!=null) {
+            boolean wasActive = r.isActive();
+            r.setActive(!r.isActive());
+            if (wasActive && !r.isActive() && r.getTriggerType()== KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
+            savePreset(r);
+        }
+    }
     public void addOrUpdate(KPWebhookPreset preset) {
         if (preset == null) return;
         if (preset.getId() >= 0) {
             KPWebhookPreset existing = find(preset.getId());
             if (existing != null) {
+                boolean tickToInactive = existing.getTriggerType()== KPWebhookPreset.TriggerType.TICK && existing.isActive() && (!preset.isActive() || preset.getTriggerType()!= KPWebhookPreset.TriggerType.TICK);
                 String prevTitle = existing.getTitle();
                 for (int i=0;i<rules.size();i++) if (rules.get(i).getId()==existing.getId()) { rules.set(i, preset); break; }
                 storage.save(preset, prevTitle);
+                if (tickToInactive) cleanupTickArtifacts(preset.getId());
                 refreshPanelTable();
                 return;
             }
@@ -961,6 +996,8 @@ public class KPWebhookPlugin extends Plugin
         if (highlightManager != null) {
             highlightManager.clear();
         }
+        if (infoboxCommandHandler != null) infoboxCommandHandler.clearAll();
+        if (overlayTextManager != null) overlayTextManager.clear();
     }
 
     private boolean containsFormattingParams(String text) {
