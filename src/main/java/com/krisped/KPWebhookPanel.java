@@ -3,133 +3,59 @@ package com.krisped;
 import net.runelite.client.ui.PluginPanel;
 
 import javax.swing.*;
-import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.*;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class KPWebhookPanel extends PluginPanel
 {
     private final KPWebhookPlugin plugin;
 
-    private final RuleTableModel model = new RuleTableModel();
-    private final JTable table = new JTable(model);
-
     private final JButton createBtn = new JButton("Create");
-    private final JButton editBtn = new JButton("Edit");
-    private final JButton sendBtn = new JButton("Send");
-    private final JButton deleteBtn = new JButton("Delete");
+    private final JPanel listContainer = new JPanel();
+    private final JScrollPane scroll;
+
+    // Remember collapsed categories between refreshes
+    private final Set<String> collapsed = new HashSet<>(); // category key (null -> "undefined")
+    private static final String UNDEFINED_KEY = "__undefined__"; // placeholder to avoid null classifier keys
+    private static final int ROW_HEIGHT = 28; // fixed visual height for each preset row
 
     public KPWebhookPanel(KPWebhookPlugin plugin)
     {
         this.plugin = plugin;
-        setLayout(new BorderLayout(10,10));
-        setBorder(BorderFactory.createEmptyBorder(10,10,10,10));
+        setLayout(new BorderLayout(8,8));
+        setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+
+        // Create main container with invisible border and much larger area
+        listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
+        listContainer.setOpaque(false); // transparent background
+        listContainer.setBorder(BorderFactory.createEmptyBorder(20,20,20,20)); // just padding, no visible border
+
+        scroll = new JScrollPane(listContainer, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.setBorder(null); // no border on scroll pane
+        scroll.setPreferredSize(new Dimension(600, 800)); // Much larger area (was 400x600)
         buildUI();
-        wire();
         refreshTable();
     }
 
     private void buildUI()
     {
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.setRowHeight(28);
-        table.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
-        table.getTableHeader().setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
-
-        RowRenderer renderer = new RowRenderer();
-        table.setDefaultRenderer(String.class, renderer);
-        table.setDefaultRenderer(Boolean.class, renderer);
-
-        table.addMouseListener(new MouseAdapter()
-        {
-            @Override
-            public void mouseClicked(MouseEvent e)
-            {
-                int row = table.rowAtPoint(e.getPoint());
-                int col = table.columnAtPoint(e.getPoint());
-                if (row >= 0)
-                {
-                    if (e.getClickCount()==2 && col == 0 && e.getButton()==MouseEvent.BUTTON1)
-                    {
-                        editSelected();
-                    }
-                    else if (col == 1 && e.getButton()==MouseEvent.BUTTON1)
-                    {
-                        KPWebhookPreset r = model.getAt(row);
-                        if (r != null)
-                        {
-                            plugin.toggleActive(r.getId());
-                            refreshTable();
-                        }
-                    }
-                }
-            }
-        });
-
-        JScrollPane scroll = new JScrollPane(table);
-        add(scroll, BorderLayout.CENTER);
-
-        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 8,4));
+        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 6,4));
         top.add(createBtn);
-        top.add(editBtn);
-        top.add(sendBtn);
-        top.add(deleteBtn);
+        top.setOpaque(false);
         add(top, BorderLayout.NORTH);
-
-        JPopupMenu popup = new JPopupMenu();
-        JMenuItem miEdit = new JMenuItem("Edit");
-        JMenuItem miSend = new JMenuItem("Send");
-        JMenuItem miToggle = new JMenuItem("Enable/Disable");
-        JMenuItem miDelete = new JMenuItem("Delete");
-        popup.add(miEdit);
-        popup.add(miSend);
-        popup.add(miToggle);
-        popup.addSeparator();
-        popup.add(miDelete);
-
-        miEdit.addActionListener(e -> editSelected());
-        miSend.addActionListener(e -> sendSelected());
-        miToggle.addActionListener(e -> toggleSelected());
-        miDelete.addActionListener(e -> deleteSelected());
-
-        table.addMouseListener(new MouseAdapter()
-        {
-            @Override public void mousePressed(MouseEvent e){ if (e.isPopupTrigger()) showPopup(e); }
-            @Override public void mouseReleased(MouseEvent e){ if (e.isPopupTrigger()) showPopup(e); }
-            private void showPopup(MouseEvent e)
-            {
-                int row = table.rowAtPoint(e.getPoint());
-                if (row >= 0)
-                    table.setRowSelectionInterval(row, row);
-                popup.show(table, e.getX(), e.getY());
-            }
-        });
-    }
-
-    private void wire()
-    {
+        add(scroll, BorderLayout.CENTER);
         createBtn.addActionListener(e -> openDialog(null));
-        editBtn.addActionListener(e -> editSelected());
-        sendBtn.addActionListener(e -> sendSelected());
-        deleteBtn.addActionListener(e -> deleteSelected());
-    }
-
-    private KPWebhookPreset selected()
-    {
-        int row = table.getSelectedRow();
-        if (row < 0) return null;
-        return model.getAt(row);
     }
 
     private void openDialog(KPWebhookPreset existing)
     {
-        KPWebhookPresetDialog d = new KPWebhookPresetDialog(
-                SwingUtilities.getWindowAncestor(this),
-                plugin,
-                existing);
+        KPWebhookPresetDialog d = new KPWebhookPresetDialog(SwingUtilities.getWindowAncestor(this), plugin, existing);
         d.setVisible(true);
         KPWebhookPreset res = d.getResult();
         if (res != null)
@@ -139,121 +65,261 @@ public class KPWebhookPanel extends PluginPanel
         }
     }
 
-    private void editSelected()
-    {
-        KPWebhookPreset r = selected();
-        if (r != null) openDialog(r);
-    }
-
-    private void sendSelected()
-    {
-        KPWebhookPreset r = selected();
-        if (r != null) plugin.manualSend(r.getId());
-    }
-
-    private void deleteSelected()
-    {
-        KPWebhookPreset r = selected();
-        if (r != null &&
-                JOptionPane.showConfirmDialog(this,
-                        "Delete '" + r.getTitle() + "'?",
-                        "Confirm",
-                        JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
-        {
-            plugin.deleteRule(r.getId());
-            refreshTable();
-        }
-    }
-
-    private void toggleSelected()
-    {
-        KPWebhookPreset r = selected();
-        if (r != null)
-        {
-            plugin.toggleActive(r.getId());
-            refreshTable();
-        }
-    }
-
     public void refreshTable()
     {
-        model.setData(plugin.getRules());
-    }
+        listContainer.removeAll();
+        List<KPWebhookPreset> presets = plugin.getRules();
+        // Group by category key (use placeholder instead of null to avoid NPE in groupingBy)
+        Map<String,List<KPWebhookPreset>> grouped = presets.stream()
+                .sorted(Comparator.comparing((KPWebhookPreset p) -> p.getCategory()==null||p.getCategory().isBlank()?"~" : p.getCategory().toLowerCase())
+                        .thenComparing(p -> Optional.ofNullable(p.getTitle()).orElse("").toLowerCase()))
+                .collect(Collectors.groupingBy(p -> {
+                    String c = p.getCategory();
+                    return (c==null || c.isBlank())? UNDEFINED_KEY : c;
+                }, LinkedHashMap::new, Collectors.toList()));
 
-    /* ===== Model ===== */
-    private static class RuleTableModel extends AbstractTableModel
-    {
-        private List<KPWebhookPreset> data = java.util.Collections.emptyList();
-        private final String[] cols = {"Name","Active"};
-
-        void setData(List<KPWebhookPreset> d){ data=d; fireTableDataChanged(); }
-        KPWebhookPreset getAt(int i){ return data.get(i); }
-        @Override public int getRowCount(){ return data.size(); }
-        @Override public int getColumnCount(){ return cols.length; }
-        @Override public String getColumnName(int c){ return cols[c]; }
-        @Override public Class<?> getColumnClass(int c){ return c==1?Boolean.class:String.class; }
-        @Override public boolean isCellEditable(int r,int c){ return c==1; }
-        @Override public Object getValueAt(int r,int c)
+        if (grouped.isEmpty())
         {
-            KPWebhookPreset p=data.get(r);
-            if (c==0) return p.getTitle();
-            if (c==1) return p.isActive();
-            return null;
+            JLabel none = new JLabel("No presets yet");
+            none.setAlignmentX(Component.LEFT_ALIGNMENT);
+            listContainer.add(none);
         }
-        @Override public void setValueAt(Object v,int r,int c)
+        else
         {
-            if (c==1 && r>=0 && r<data.size())
-                data.get(r).setActive(Boolean.TRUE.equals(v));
-        }
-    }
-
-    /* ===== Renderer ===== */
-    private class RowRenderer extends DefaultTableCellRenderer
-    {
-        private final Color even = new Color(245,245,245);
-        private final Color odd  = Color.WHITE;
-        private final Color inactive = new Color(130,130,130);
-
-        @Override
-        public Component getTableCellRendererComponent(JTable tbl, Object value,
-                                                       boolean isSelected, boolean hasFocus,
-                                                       int row, int col)
-        {
-            Component c;
-            if (col == 1)
+            int i = 0; int total = grouped.size();
+            for (Map.Entry<String,List<KPWebhookPreset>> e : grouped.entrySet())
             {
-                JCheckBox box = new JCheckBox();
-                box.setHorizontalAlignment(SwingConstants.CENTER);
-                if (value instanceof Boolean) box.setSelected((Boolean) value);
-                box.setEnabled(false);
-                c = box;
+                String storedKey = e.getKey();
+                String catKey = UNDEFINED_KEY.equals(storedKey) ? null : storedKey; // convert placeholder back to null
+                String headerText = catKey==null?"undefined":catKey;
+                CategorySection section = new CategorySection(headerText, catKey);
+                section.setPresets(e.getValue());
+                section.setAlignmentX(Component.LEFT_ALIGNMENT); // ensure full-width flow
+                listContainer.add(section);
+                if (++i < total) listContainer.add(Box.createVerticalStrut(4));
+            }
+        }
+        // Removed vertical glue to avoid large empty expandable space under last category
+        listContainer.revalidate();
+        listContainer.repaint();
+    }
+
+    /* ---------------- Category Section ---------------- */
+    private class CategorySection extends JPanel
+    {
+        private final String categoryKey; // null for undefined
+        private final JButton headerBtn = new JButton();
+        private final JPanel content = new JPanel();
+        private boolean expanded;
+
+        CategorySection(String label, String categoryKey)
+        {
+            this.categoryKey = categoryKey; // may be null
+            this.expanded = !collapsed.contains(keyForCollapse());
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setOpaque(false);
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            headerBtn.setText(titleText(label));
+            headerBtn.setFocusPainted(false);
+            headerBtn.setContentAreaFilled(false);
+            headerBtn.setBorder(new EmptyBorder(2,0,2,0));
+            headerBtn.setHorizontalAlignment(SwingConstants.LEFT);
+            headerBtn.setFont(headerBtn.getFont().deriveFont(Font.BOLD, 14f));
+            headerBtn.addActionListener(e -> toggle());
+            headerBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+            add(headerBtn);
+            content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+            content.setOpaque(false);
+            content.setAlignmentX(Component.LEFT_ALIGNMENT);
+            // Always add content panel, but control visibility instead of add/remove
+            add(content);
+            content.setVisible(expanded);
+        }
+
+        private String keyForCollapse(){ return categoryKey==null?UNDEFINED_KEY:categoryKey; }
+
+        private String titleText(String label){ return (expanded?"▼ ":"▶ ") + label; }
+
+        void setPresets(List<KPWebhookPreset> list)
+        {
+            content.removeAll();
+            for (KPWebhookPreset p : list)
+            {
+                JPanel row = buildRow(p);
+                row.setAlignmentX(Component.LEFT_ALIGNMENT);
+                content.add(row);
+                content.add(Box.createVerticalStrut(2)); // small gap between presets
+            }
+            if (content.getComponentCount() > 0) content.remove(content.getComponentCount()-1); // remove last gap
+        }
+
+        private void toggle()
+        {
+            expanded = !expanded;
+            headerBtn.setText(titleText(categoryKey==null?"undefined":categoryKey));
+
+            // Use visibility instead of add/remove for instant response
+            content.setVisible(expanded);
+
+            if (expanded)
+            {
+                collapsed.remove(keyForCollapse());
             }
             else
             {
-                c = super.getTableCellRendererComponent(tbl,value,isSelected,hasFocus,row,col);
+                collapsed.add(keyForCollapse());
             }
 
-            KPWebhookPreset preset = model.getAt(row);
-            boolean isActive = preset.isActive();
+            // Force immediate layout update
+            revalidate();
+            repaint();
 
-            if (!isSelected)
-                c.setBackground(row % 2 == 0 ? even : odd);
-            else
-                c.setBackground(new Color(51,153,255));
-
-            if (c instanceof JLabel)
+            // Update parent immediately
+            if (getParent() != null)
             {
-                JLabel l=(JLabel)c;
-                l.setFont(l.getFont().deriveFont(Font.PLAIN, 13f));
-                l.setForeground(!isActive
-                        ? inactive
-                        : (isSelected ? Color.WHITE : Color.BLACK));
+                getParent().revalidate();
+                getParent().repaint();
             }
-            else if (c instanceof JCheckBox)
-            {
-                c.setBackground(row % 2 == 0 ? even : odd);
-            }
-            return c;
         }
+
+        @Override public Dimension getMaximumSize(){ return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
+
+        @Override public Dimension getPreferredSize()
+        {
+            Dimension d = super.getPreferredSize();
+            // When collapsed, only show header height
+            if (!expanded || !content.isVisible())
+            {
+                return new Dimension(d.width, headerBtn.getPreferredSize().height + 4);
+            }
+            return d;
+        }
+    }
+
+    /* ---------------- Row Builder ---------------- */
+    private JPanel buildRow(KPWebhookPreset preset)
+    {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        // Subtle RuneLite-esque background
+        Color base = UIManager.getColor("Panel.background");
+        if (base == null) base = new Color(45,45,45);
+        Color bg = new Color(Math.min(base.getRed()+8,255), Math.min(base.getGreen()+8,255), Math.min(base.getBlue()+8,255));
+        row.setOpaque(true);
+        row.setBackground(bg);
+        row.setBorder(new EmptyBorder(4,8,4,8));
+        row.setPreferredSize(new Dimension(0, ROW_HEIGHT));
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, ROW_HEIGHT));
+
+        String titleText = preset.getTitle()!=null? preset.getTitle():"(no title)";
+        JLabel titleLbl = new JLabel("> " + titleText);
+        titleLbl.setFont(titleLbl.getFont().deriveFont(Font.PLAIN, 15f));
+        Color activeColor = new Color(225,225,225);
+        Color inactiveColor = new Color(140,140,140);
+        titleLbl.setForeground(preset.isActive()?activeColor:inactiveColor);
+        titleLbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        titleLbl.addMouseListener(new MouseAdapter(){ @Override public void mouseClicked(MouseEvent e){ if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount()==2) openDialog(preset);} });
+
+        JPanel center = new JPanel();
+        center.setLayout(new BoxLayout(center, BoxLayout.X_AXIS));
+        center.setOpaque(false);
+        center.add(titleLbl);
+
+        String trig = preset.prettyTrigger();
+        if (trig != null && !trig.isBlank())
+        {
+            center.add(Box.createHorizontalStrut(8));
+            JLabel trigLbl = new JLabel();
+            String trigEsc = escapeHtml(trig);
+            // Smaller trigger text that stays on one line
+            trigLbl.setText(trigEsc); // removed HTML formatting to prevent line wrapping
+            trigLbl.setFont(trigLbl.getFont().deriveFont(Font.PLAIN, 12f)); // smaller font
+            trigLbl.setForeground(new Color(180,180,180)); // slightly dimmed
+            // Ensure single line display
+            trigLbl.setHorizontalAlignment(SwingConstants.LEFT);
+            center.add(trigLbl);
+        }
+        center.add(Box.createHorizontalGlue());
+
+        // Simplified checkbox placement - directly in BorderLayout.EAST
+        JCheckBox activeBox = new JCheckBox();
+        activeBox.setSelected(preset.isActive());
+        activeBox.setOpaque(false);
+        activeBox.setToolTipText("Aktiver/deaktiver");
+        activeBox.addActionListener(e -> { plugin.toggleActive(preset.getId()); refreshTable(); });
+
+        row.add(center, BorderLayout.CENTER);
+        row.add(activeBox, BorderLayout.EAST);
+
+        // Tooltip preview for commands applied to all interactive child components
+        applyCommandsTooltip(preset, row, titleLbl, activeBox, center);
+
+        // Context menu
+        JPopupMenu popup = new JPopupMenu();
+        JMenuItem editItem = new JMenuItem("Edit");
+        JMenuItem runItem = new JMenuItem("Run script");
+        JMenuItem deleteItem = new JMenuItem("Delete");
+        editItem.addActionListener(e -> openDialog(preset));
+        runItem.addActionListener(e -> plugin.manualSend(preset.getId()));
+        deleteItem.addActionListener(e -> {
+            if (JOptionPane.showConfirmDialog(this, "Delete '"+preset.getTitle()+"'?", "Confirm", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
+            { plugin.deleteRule(preset.getId()); refreshTable(); }
+        });
+        popup.add(editItem);
+        popup.add(runItem);
+        popup.addSeparator();
+        popup.add(deleteItem);
+
+        MouseAdapter popupHandler = new MouseAdapter() {
+            private void showPopup(MouseEvent e){ if (e.isPopupTrigger()) popup.show(e.getComponent(), e.getX(), e.getY()); }
+            @Override public void mousePressed(MouseEvent e){ showPopup(e);}
+            @Override public void mouseReleased(MouseEvent e){ showPopup(e);}
+        };
+        for (JComponent c : new JComponent[]{row, center, titleLbl, activeBox})
+        {
+            c.addMouseListener(popupHandler);
+        }
+
+        return row;
+    }
+
+    // Apply tooltip to all provided components (ensures visibility regardless of hover target)
+    private void applyTooltipAll(String tooltip, JComponent... comps)
+    {
+        for (JComponent c : comps) c.setToolTipText(tooltip);
+    }
+
+    private void applyCommandsTooltip(KPWebhookPreset preset, JComponent... comps)
+    {
+        String commands = preset.getCommands();
+        String tooltip;
+        if (commands != null && !commands.isBlank())
+        {
+            String trimmed = commands.trim();
+            String[] lines = trimmed.split("\\r?\\n");
+            StringBuilder sb = new StringBuilder();
+            int maxLines = 8;
+            for (int i=0;i<lines.length && i<maxLines;i++)
+            {
+                String ln = lines[i];
+                if (ln.length() > 140) ln = ln.substring(0,137) + "...";
+                sb.append(escapeHtml(ln)).append("\n");
+            }
+            if (lines.length > maxLines) sb.append("..." + (lines.length - maxLines) + " more line(s)\n");
+            String body = sb.toString();
+            tooltip = "<html><b>Commands:</b><br><pre style='margin:2px 0 2px 0;font-family:monospace;font-size:11px;color:#E0E0E0;'>" + escapeHtml(body) + "</pre><i>Double-click title to edit</i></html>";
+        }
+        else
+        {
+            tooltip = "<html><b>No commands</b><br><i>Double-click title to edit</i></html>";
+        }
+        applyTooltipAll(tooltip, comps);
+    }
+
+    // Simple HTML escape helper for tooltip
+    private String escapeHtml(String s)
+    {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }

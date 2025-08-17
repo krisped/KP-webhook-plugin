@@ -14,7 +14,13 @@ public class KPWebhookPreset
     {
         MANUAL,
         STAT,
-        WIDGET
+        WIDGET,
+        PLAYER_SPAWN,
+        PLAYER_DESPAWN,
+        ANIMATION_SELF,
+        MESSAGE,
+        VARBIT,
+        VARPLAYER
     }
 
     public enum StatMode
@@ -47,13 +53,75 @@ public class KPWebhookPreset
         private Integer childId;
     }
 
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class PlayerConfig
+    {
+        @Builder.Default
+        private boolean all = true;
+        private String name; // case-insensitive match if not null/blank
+        private Integer combatRange; // +/- combat levels from local player if not null
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class AnimationConfig
+    {
+        private Integer animationId;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class MessageConfig
+    {
+        private Integer messageId; // ChatMessageType ID
+        private String messageText; // Text to match (supports wildcards like *LEVEL*)
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class VarbitConfig
+    {
+        private Integer varbitId;
+        private Integer value;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class VarplayerConfig
+    {
+        private Integer varplayerId;
+        private Integer value;
+    }
+
     @Builder.Default
     private int id = -1;
 
     private String title;
+    private String category; // new optional category label
     private TriggerType triggerType;
     private StatConfig statConfig;
     private WidgetConfig widgetConfig;
+    private PlayerConfig playerConfig;
+    private AnimationConfig animationConfig;
+    private MessageConfig messageConfig;
+    private VarbitConfig varbitConfig;
+    private VarplayerConfig varplayerConfig;
 
     private String webhookUrl;
     @Builder.Default
@@ -74,7 +142,7 @@ public class KPWebhookPreset
     @Builder.Default
     private Integer hlOutlineDuration = 5;
     @Builder.Default
-    private Integer hlOutlineWidth = 4;
+    private Integer hlOutlineWidth = 2; // changed from 4 to 2 for thinner default outline
     @Builder.Default
     private String  hlOutlineColor = "#FFFF00";
     @Builder.Default
@@ -129,6 +197,12 @@ public class KPWebhookPreset
     private Integer textOverSize = 16;
     @Builder.Default
     private Integer textOverDuration = 80;
+    @Builder.Default
+    private Boolean textOverBold = false;
+    @Builder.Default
+    private Boolean textOverItalic = false;
+    @Builder.Default
+    private Boolean textOverUnderline = false;
 
     // =========== Text CENTER settings ===========
     @Builder.Default
@@ -141,6 +215,12 @@ public class KPWebhookPreset
     private Integer textCenterSize = 16;
     @Builder.Default
     private Integer textCenterDuration = 80;
+    @Builder.Default
+    private Boolean textCenterBold = false;
+    @Builder.Default
+    private Boolean textCenterItalic = false;
+    @Builder.Default
+    private Boolean textCenterUnderline = false;
 
     // =========== Text UNDER settings ===========
     @Builder.Default
@@ -153,6 +233,13 @@ public class KPWebhookPreset
     private Integer textUnderSize = 16;
     @Builder.Default
     private Integer textUnderDuration = 80;
+    @Builder.Default
+    private Boolean textUnderBold = false;
+    @Builder.Default
+    private Boolean textUnderItalic = false;
+    @Builder.Default
+    private Boolean textUnderUnderline = false;
+
 
     public String prettyTrigger()
     {
@@ -189,6 +276,76 @@ public class KPWebhookPreset
                     return "WIDGET " + widgetConfig.getGroupId() + ":" + widgetConfig.getChildId();
                 }
                 return "WIDGET " + widgetConfig.getGroupId();
+            case PLAYER_SPAWN:
+            case PLAYER_DESPAWN:
+                if (playerConfig == null)
+                {
+                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ?";
+                }
+                if (playerConfig.isAll())
+                {
+                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ALL";
+                }
+                if (playerConfig.getName()!=null && !playerConfig.getName().isBlank())
+                {
+                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN ":"PLAYER_DESPAWN ") + playerConfig.getName();
+                }
+                if (playerConfig.getCombatRange()!=null)
+                {
+                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN +/-":"PLAYER_DESPAWN +/-") + playerConfig.getCombatRange();
+                }
+                return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ?";
+            case ANIMATION_SELF:
+                if (animationConfig == null || animationConfig.getAnimationId() == null)
+                {
+                    return "ANIMATION_SELF ?";
+                }
+                return "ANIMATION_SELF " + animationConfig.getAnimationId();
+            case MESSAGE:
+                if (messageConfig == null)
+                {
+                    return "MESSAGE ?";
+                }
+                String result = "MESSAGE";
+                if (messageConfig.getMessageId() != null)
+                {
+                    result += " " + messageConfig.getMessageId();
+                }
+                if (messageConfig.getMessageText() != null && !messageConfig.getMessageText().isBlank())
+                {
+                    result += " " + messageConfig.getMessageText();
+                }
+                return result;
+            case VARBIT:
+                if (varbitConfig == null)
+                {
+                    return "VARBIT ?";
+                }
+                String varbitResult = "VARBIT";
+                if (varbitConfig.getVarbitId() != null)
+                {
+                    varbitResult += " " + varbitConfig.getVarbitId();
+                }
+                if (varbitConfig.getValue() != null)
+                {
+                    varbitResult += " = " + varbitConfig.getValue();
+                }
+                return varbitResult;
+            case VARPLAYER:
+                if (varplayerConfig == null)
+                {
+                    return "VARPLAYER ?";
+                }
+                String varplayerResult = "VARPLAYER";
+                if (varplayerConfig.getVarplayerId() != null)
+                {
+                    varplayerResult += " " + varplayerConfig.getVarplayerId();
+                }
+                if (varplayerConfig.getValue() != null)
+                {
+                    varplayerResult += " = " + varplayerConfig.getValue();
+                }
+                return varplayerResult;
             default:
                 return "?";
         }

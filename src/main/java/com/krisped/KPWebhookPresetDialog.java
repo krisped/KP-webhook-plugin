@@ -1,7 +1,7 @@
 package com.krisped;
 
 import net.runelite.api.Skill;
-import com.krisped.SimpleDocListener;
+import net.runelite.client.ui.FontManager;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,6 +20,11 @@ import java.util.Locale;
  */
 public class KPWebhookPresetDialog extends JDialog
 {
+    // Added UI sizing constants
+    private static final float BASE_FONT_SIZE = 16f; // increased base font size for better readability
+    private static final int COMPACT_PANEL_WIDTH = 230; // width of compact dropdown panels
+    private static final float HEADER_FONT_SIZE = 18f;
+
     private final KPWebhookPreset existing;
     private final KPWebhookPlugin plugin;
 
@@ -27,6 +32,7 @@ public class KPWebhookPresetDialog extends JDialog
 
     /* -------- Preset Tab -------- */
     private JTextField titleField;
+    private JTextField categoryField; // new category input
     private JComboBox<String> triggerTypeBox;
     private static final String TRIGGER_PLACEHOLDER = "-- Trigger --";
     private JPanel triggerCards;
@@ -40,10 +46,34 @@ public class KPWebhookPresetDialog extends JDialog
     private static final String SKILL_PLACEHOLDER  = "-- Skill --";
     private JPanel widgetCard;
     private JTextField widgetField;
+    // New player trigger components
+    private JPanel playerCard;
+    private JRadioButton playerAllRadio;
+    private JRadioButton playerNameRadio;
+    private JRadioButton playerCombatRadio;
+    private JTextField playerNameField;
+    private JSpinner playerCombatSpinner;
+    // Animation trigger components
+    private JPanel animationCard;
+    private JTextField animationIdField;
+    // Message trigger components
+    private JPanel messageCard;
+    private JSpinner messageIdSpinner; // now only ID spinner
+    // Varbit trigger components
+    private JPanel varbitCard;
+    private JSpinner varbitIdSpinner;
+    private JSpinner varbitValueSpinner;
+    // Varplayer trigger components
+    private JPanel varplayerCard;
+    private JSpinner varplayerIdSpinner;
+    private JSpinner varplayerValueSpinner;
+    // Webhook components
     private JCheckBox useDefaultWebhookBox;
     private JTextField customWebhookField;
     private JTextArea commandsArea;
     private JCheckBox activeBox;
+    // Holder for trigger details panel to toggle visibility
+    private JPanel triggerDetailsPanel;
 
     /* -------- Settings Tab (kategorier) -------- */
     private JPanel settingsRoot;
@@ -54,32 +84,34 @@ public class KPWebhookPresetDialog extends JDialog
     private TextCategoryPanel textOverPanel;
     private TextCategoryPanel textCenterPanel;
     private TextCategoryPanel textUnderPanel;
-    // Removed dropdown & overhead legacy
+    // Screenshot settings removed - keeping it simple
     /* -------- Info Tab -------- */
     private JTextArea infoArea;
 
     private KPWebhookPreset result;
 
     /* Default commands */
-    private static final String DEFAULT_COMMANDS =
-            "# Kommandoer:\n" +
-            "#  NOTIFY <tekst>\n" +
-            "#  WEBHOOK <tekst>\n" +
-            "#  SCREENSHOT [tekst]\n" +
-            "#  HIGHLIGHT_OUTLINE\n" +
-            "#  HIGHLIGHT_TILE\n" +
-            "#  HIGHLIGHT_HULL\n" +
-            "#  HIGHLIGHT_MINIMAP\n" +
-            "#  (Varighet, farger, blink settes i Settings)\n" +
-            "#  TEXT_OVER <tekst>\n" +
-            "#  TEXT_CENTER <tekst>\n" +
-            "#  TEXT_UNDER <tekst>\n" +
-            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}}\n" +
+    private static final String DEFAULT_COMMANDS_TEXT =
+            "# Available commands:\n" +
+            "#  NOTIFY <text>            - In-game notification\n" +
+            "#  WEBHOOK <text>          - Send to Discord/webhook\n" +
+            "#  SCREENSHOT [text]        - Capture client area & upload (optional caption)\n" +
+            "#  HIGHLIGHT_OUTLINE        - Outline local player\n" +
+            "#  HIGHLIGHT_TILE           - Highlight tile under local player\n" +
+            "#  HIGHLIGHT_HULL           - Hull highlight (player)\n" +
+            "#  HIGHLIGHT_MINIMAP        - Minimap marker (reserved)\n" +
+            "#  TEXT_OVER <text>         - Text above player\n" +
+            "#  TEXT_CENTER <text>       - Text centered on player\n" +
+            "#  TEXT_UNDER <text>        - Text under feet\n" +
+            "#  SLEEP <ms>               - Millisecond delay in sequence\n" +
+            "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
+            "#  STOP                     - Stop all active sequences\n" +
+            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n" +
             "\n" +
-            "NOTIFY Du fikk et level i {{stat}}\n" +
+            "NOTIFY You gained a level in {{stat}}\n" +
             "HIGHLIGHT_OUTLINE\n" +
-            "WEBHOOK Level i {{stat}} nå {{current}}\n" +
-            "TEXT_OVER Grattis {{player}}!";
+            "WEBHOOK Level in {{stat}} now {{current}}\n" +
+            "TEXT_OVER Grats {{player}}!";
 
     public KPWebhookPresetDialog(Window owner,
                                  KPWebhookPlugin plugin,
@@ -119,65 +151,81 @@ public class KPWebhookPresetDialog extends JDialog
     private JPanel buildPresetTab()
     {
         JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        panel.setBorder(new EmptyBorder(6,10,10,10)); // tighter top spacing
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(6,6,6,6);
+        g.insets = new Insets(4,4,2,4);
         g.fill = GridBagConstraints.HORIZONTAL;
-        g.anchor = GridBagConstraints.WEST;
+        g.anchor = GridBagConstraints.NORTHWEST;
         g.weightx = 1;
         int y=0;
 
+        // Create a consistent label width using the widest label text
+        JLabel probe = new JLabel("Custom URL:");
+        int labelW = probe.getPreferredSize().width + 4;
+        Dimension labelDim = new Dimension(labelW, probe.getPreferredSize().height);
+
         // Title
-        g.gridx=0; g.gridy=y; g.weightx=0;
-        panel.add(new JLabel("Title:"), g);
+        JLabel titleLbl = new JLabel("Title:"); titleLbl.setPreferredSize(labelDim);
+        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(titleLbl, g);
         titleField = new JTextField();
-        g.gridx=1; g.weightx=1;
-        panel.add(titleField, g); y++;
+        g.gridx=1; g.weightx=1; panel.add(titleField, g); y++;
+
+        // Category (optional)
+        JLabel catLbl = new JLabel("Category:"); catLbl.setPreferredSize(labelDim);
+        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(catLbl, g);
+        categoryField = new JTextField();
+        categoryField.setToolTipText("Optional category/group label");
+        g.gridx=1; g.weightx=1; panel.add(categoryField, g); y++;
 
         // Trigger
-        g.gridx=0; g.gridy=y; g.weightx=0;
-        panel.add(new JLabel("Trigger:"), g);
+        JLabel trigLbl = new JLabel("Trigger:"); trigLbl.setPreferredSize(labelDim);
+        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(trigLbl, g);
         triggerTypeBox = new JComboBox<>(buildTriggerModel());
-        g.gridx=1; g.weightx=1;
-        panel.add(triggerTypeBox, g); y++;
+        g.gridx=1; g.weightx=1; panel.add(triggerTypeBox, g); y++;
 
-        // Trigger details card container
-        g.gridx=0; g.gridy=y; g.gridwidth=2;
-        JPanel triggerDetailsPanel = new JPanel(new BorderLayout());
+        // Trigger details card container (spans full width)
+        g.gridx=0; g.gridy=y; g.gridwidth=2; g.weightx=1;
+        triggerDetailsPanel = new JPanel(new BorderLayout());
+        triggerDetailsPanel.setOpaque(false);
         triggerDetailsPanel.setBorder(new TitledBorder("Trigger Details"));
         triggerCards = buildTriggerCards();
         triggerDetailsPanel.add(triggerCards, BorderLayout.CENTER);
-        panel.add(triggerDetailsPanel, g); g.gridwidth=1; y++;
+        panel.add(triggerDetailsPanel, g); y++; g.gridwidth=1;
 
-        // Webhook default
-        g.gridx=0; g.gridy=y; g.weightx=0;
-        panel.add(new JLabel("Use standard webhook:"), g);
-        useDefaultWebhookBox = new JCheckBox();
-        g.gridx=1; g.weightx=1;
-        panel.add(useDefaultWebhookBox, g); y++;
-
-        // Custom webhook
-        g.gridx=0; g.gridy=y; g.weightx=0;
-        panel.add(new JLabel("Custom webhook:"), g);
+        // Webhook group panel
+        JPanel webhookGroup = new JPanel(new GridBagLayout());
+        webhookGroup.setOpaque(false);
+        webhookGroup.setBorder(new TitledBorder("Webhook"));
+        GridBagConstraints wg = new GridBagConstraints();
+        wg.insets = new Insets(3,6,3,6);
+        wg.fill = GridBagConstraints.HORIZONTAL;
+        wg.anchor = GridBagConstraints.WEST;
+        wg.weightx = 1;
+        int wy = 0;
+        useDefaultWebhookBox = new JCheckBox("Use default webhook");
+        useDefaultWebhookBox.setOpaque(false);
+        wg.gridx=0; wg.gridy=wy; wg.gridwidth=2; webhookGroup.add(useDefaultWebhookBox, wg); wy++; wg.gridwidth=1;
+        JLabel customLbl = new JLabel("Custom URL:"); customLbl.setPreferredSize(labelDim);
+        wg.gridx=0; wg.gridy=wy; wg.weightx=0; webhookGroup.add(customLbl, wg);
         customWebhookField = new JTextField();
-        g.gridx=1; g.weightx=1;
-        panel.add(customWebhookField, g); y++;
+        wg.gridx=1; wg.weightx=1; webhookGroup.add(customWebhookField, wg); wy++;
+        // add group to main panel
+        g.gridx=0; g.gridy=y; g.gridwidth=2; panel.add(webhookGroup, g); y++; g.gridwidth=1;
 
-        // Commands
-        g.gridx=0; g.gridy=y; g.weightx=0; g.anchor=GridBagConstraints.NORTHWEST;
-        panel.add(new JLabel("Commands:"), g);
+        // Commands area (titled border, absorbs extra vertical space)
         commandsArea = new JTextArea(14, 60);
         commandsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         JScrollPane sp = new JScrollPane(commandsArea);
-        g.gridx=1; g.weightx=1;
-        panel.add(sp, g); y++;
+        sp.setBorder(new TitledBorder("Commands"));
+        g.gridx=0; g.gridy=y; g.gridwidth=2; g.weightx=1; g.weighty=1; g.fill=GridBagConstraints.BOTH; panel.add(sp, g); y++; g.gridwidth=1; g.weighty=0; g.fill=GridBagConstraints.HORIZONTAL;
 
-        // Active
-        g.gridx=0; g.gridy=y; g.weightx=0; g.anchor=GridBagConstraints.WEST;
-        panel.add(new JLabel("Active:"), g);
+        // Active checkbox row
+        JLabel activeLbl = new JLabel("Active:"); activeLbl.setPreferredSize(labelDim);
+        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(activeLbl, g);
         activeBox = new JCheckBox();
         activeBox.setSelected(true);
-        g.gridx=1; g.weightx=1;
-        panel.add(activeBox, g); y++;
+        g.gridx=1; g.weightx=1; panel.add(activeBox, g); y++;
 
         // Listeners
         triggerTypeBox.addActionListener(e -> updateTriggerVisibility());
@@ -191,67 +239,78 @@ public class KPWebhookPresetDialog extends JDialog
     {
         settingsRoot = new JPanel();
         settingsRoot.setLayout(new BoxLayout(settingsRoot, BoxLayout.Y_AXIS));
-        settingsRoot.setBorder(new EmptyBorder(10,10,10,10));
+        settingsRoot.setBorder(new EmptyBorder(8,8,8,8));
 
-        settingsRoot.add(sectionLabel("Highlight"));
-        outlinePanel = new HighlightCategoryPanel(existing!=null?existing.getHlOutlineDuration():5,
+        // Instantiate all panels (kept for save())
+        outlinePanel = new HighlightCategoryPanel(existing!=null?existing.getHlOutlineDuration():10,
                 existing!=null?existing.getHlOutlineColor():"#FFFF00",
                 existing!=null && Boolean.TRUE.equals(existing.getHlOutlineBlink()),
-                existing!=null?existing.getHlOutlineWidth():4,
-                "Outline");
-        tilePanel = new HighlightCategoryPanel(existing!=null?existing.getHlTileDuration():5,
+                existing!=null?existing.getHlOutlineWidth():2,
+                "Highlight Outline");
+        tilePanel = new HighlightCategoryPanel(existing!=null?existing.getHlTileDuration():10,
                 existing!=null?existing.getHlTileColor():"#00FF88",
                 existing!=null && Boolean.TRUE.equals(existing.getHlTileBlink()),
                 existing!=null?existing.getHlTileWidth():2,
-                "Tile");
-        hullPanel = new HighlightCategoryPanel(existing!=null?existing.getHlHullDuration():5,
-                existing!=null?existing.getHlHullColor():"#FF55FF",
-                existing!=null && Boolean.TRUE.equals(existing.getHlHullBlink()),
-                existing!=null?existing.getHlHullWidth():2,
-                "Hull");
-        minimapPanel = new HighlightCategoryPanel(existing!=null?existing.getHlMinimapDuration():5,
+                "Highlight Tile");
+        minimapPanel = new HighlightCategoryPanel(existing!=null?existing.getHlMinimapDuration():10,
                 existing!=null?existing.getHlMinimapColor():"#00FFFF",
                 existing!=null && Boolean.TRUE.equals(existing.getHlMinimapBlink()),
                 existing!=null?existing.getHlMinimapWidth():2,
-                "Minimap");
-        settingsRoot.add(new CollapsibleSection(outlinePanel));
-        settingsRoot.add(new CollapsibleSection(tilePanel));
-        settingsRoot.add(new CollapsibleSection(hullPanel));
-        settingsRoot.add(new CollapsibleSection(minimapPanel));
+                "Highlight Minimap");
+        hullPanel = new HighlightCategoryPanel(existing!=null?existing.getHlHullDuration():10,
+                existing!=null?existing.getHlHullColor():"#FF55FF",
+                existing!=null && Boolean.TRUE.equals(existing.getHlHullBlink()),
+                existing!=null?existing.getHlHullWidth():2,
+                "Highlight Hull");
 
-        settingsRoot.add(Box.createVerticalStrut(12));
-        settingsRoot.add(sectionLabel("Text"));
-        textOverPanel = new TextCategoryPanel(
-                existing!=null?existing.getTextOverDuration():80,
-                existing!=null?existing.getTextOverSize():16,
-                existing!=null?existing.getTextOverColor():"#FFFFFF",
-                existing!=null && Boolean.TRUE.equals(existing.getTextOverBlink()),
-                "TEXT_OVER");
-        textCenterPanel = new TextCategoryPanel(
-                existing!=null?existing.getTextCenterDuration():80,
-                existing!=null?existing.getTextCenterSize():16,
-                existing!=null?existing.getTextCenterColor():"#FFFFFF",
-                existing!=null && Boolean.TRUE.equals(existing.getTextCenterBlink()),
-                "TEXT_CENTER");
         textUnderPanel = new TextCategoryPanel(
-                existing!=null?existing.getTextUnderDuration():80,
+                existing!=null?existing.getTextUnderDuration():10,
                 existing!=null?existing.getTextUnderSize():16,
                 existing!=null?existing.getTextUnderColor():"#FFFFFF",
                 existing!=null && Boolean.TRUE.equals(existing.getTextUnderBlink()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextUnderBold()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextUnderItalic()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextUnderUnderline()),
                 "TEXT_UNDER");
+        textOverPanel = new TextCategoryPanel(
+                existing!=null?existing.getTextOverDuration():10,
+                existing!=null?existing.getTextOverSize():16,
+                existing!=null?existing.getTextOverColor():"#FFFFFF",
+                existing!=null && Boolean.TRUE.equals(existing.getTextOverBlink()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextOverBold()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextOverItalic()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextOverUnderline()),
+                "TEXT_OVER");
+        textCenterPanel = new TextCategoryPanel(
+                existing!=null?existing.getTextCenterDuration():10,
+                existing!=null?existing.getTextCenterSize():16,
+                existing!=null?existing.getTextCenterColor():"#FFFFFF",
+                existing!=null && Boolean.TRUE.equals(existing.getTextCenterBlink()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextCenterBold()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextCenterItalic()),
+                existing!=null && Boolean.TRUE.equals(existing.getTextCenterUnderline()),
+                "TEXT_CENTER");
+
+        // Highlight group header
+        JLabel hlHeader = new JLabel("Highlight");
+        hlHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
+        hlHeader.setBorder(new EmptyBorder(4,2,2,2));
+        settingsRoot.add(hlHeader);
+        settingsRoot.add(new CollapsibleSection(outlinePanel));
+        settingsRoot.add(new CollapsibleSection(tilePanel));
+        settingsRoot.add(new CollapsibleSection(minimapPanel));
+        settingsRoot.add(new CollapsibleSection(hullPanel));
+        settingsRoot.add(Box.createVerticalStrut(6));
+        // Text group header
+        JLabel txtHeader = new JLabel("Text");
+        txtHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
+        txtHeader.setBorder(new EmptyBorder(4,2,2,2));
+        settingsRoot.add(txtHeader);
+        settingsRoot.add(new CollapsibleSection(textUnderPanel));
         settingsRoot.add(new CollapsibleSection(textOverPanel));
         settingsRoot.add(new CollapsibleSection(textCenterPanel));
-        settingsRoot.add(new CollapsibleSection(textUnderPanel));
 
         return new JScrollPane(settingsRoot);
-    }
-
-    private JComponent sectionLabel(String txt)
-    {
-        JLabel l = new JLabel(txt);
-        l.setBorder(new EmptyBorder(8,0,4,0));
-        l.setFont(l.getFont().deriveFont(Font.BOLD, 16f));
-        return l;
     }
 
     private JPanel buildInfoTab()
@@ -261,24 +320,42 @@ public class KPWebhookPresetDialog extends JDialog
         infoArea.setEditable(false);
         infoArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         infoArea.setText(
-                "KP Webhook Plugin - Commands & Settings\n" +
+                "KP Webhook Plugin - Commands & Triggers\n" +
                         "====================================\n\n" +
                         "Commands:\n" +
-                        "  NOTIFY <text>                - Show chat message\n" +
-                        "  WEBHOOK <text>               - Send webhook message\n" +
-                        "  SCREENSHOT [text]            - Send screenshot to webhook\n" +
-                        "  HIGHLIGHT_OUTLINE            - Highlight player outline\n" +
-                        "  HIGHLIGHT_TILE               - Highlight tile outline\n" +
-                        "  HIGHLIGHT_HULL               - Highlight player hull\n" +
-                        "  HIGHLIGHT_MINIMAP            - Highlight on minimap (WIP)\n" +
-                        "  TEXT_OVER <text>             - Show text above player (style in Settings)\n" +
-                        "  TEXT_CENTER <text>           - Show text centered (style)\n" +
-                        "  TEXT_UNDER <text>            - Show text under player (style)\n\n" +
-                        "Settings fanen inneholder collapsible seksjoner for hver kommando-type.\n" +
-                        "Highlight: Duration (ticks), Blink, Color.\n" +
-                        "Text: Size, Blink, Color.\n" +
-                        "Legg selve teksten direkte inn i Commands-feltet (f.eks: TEXT_OVER Hei!).\n" +
-                        "Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}}\n"
+                        "  NOTIFY <text>                Chat message\n" +
+                        "  WEBHOOK <text>               Send webhook message\n" +
+                        "  SCREENSHOT [text]            Upload screenshot (optional text)\n" +
+                        "  HIGHLIGHT_OUTLINE            Outline local player\n" +
+                        "  HIGHLIGHT_TILE               Highlight tile under player\n" +
+                        "  HIGHLIGHT_HULL               Player hull highlight\n" +
+                        "  HIGHLIGHT_MINIMAP            (Reserved / future)\n" +
+                        "  TEXT_OVER <text>             Text above player\n" +
+                        "  TEXT_CENTER <text>           Text centered on player\n" +
+                        "  TEXT_UNDER <text>            Text under player feet\n" +
+                        "  SLEEP <ms>                   Millisecond delay\n" +
+                        "  TICK [n]                     Wait n ticks (default 1)\n" +
+                        "  STOP                         Cancel all active sequences\n\n" +
+                        "Triggers:\n" +
+                        "  MANUAL                       Trigger manually from UI button\n" +
+                        "  STAT                         When a stat matches condition (LEVEL_UP / ABOVE / BELOW)\n" +
+                        "  WIDGET                       When a widget group (and optional child) loads\n" +
+                        "  PLAYER_SPAWN                 When a player spawns matching: ALL / specific name / combat +/- range\n" +
+                        "  PLAYER_DESPAWN               When a player despawns matching same conditions as spawn\n" +
+                        "  ANIMATION_SELF               When your player performs a specific animation ID\n" +
+                        "  MESSAGE                      When a chat message of a given ChatMessageType ID appears (ID only)\n" +
+                        "  VARBIT                       When a specific varbit changes to a target value\n" +
+                        "  VARPLAYER                    When a specific varplayer changes to a target value\n\n" +
+                        "Player Trigger Matching:\n" +
+                        "  ALL: every player\n" +
+                        "  Specific name: case-insensitive exact name match\n" +
+                        "  Combat +/-: players whose combat level is within +/- range of your combat\n\n" +
+                        "MESSAGE Trigger:\n" +
+                        "  Only message ID is used nå (tekstfilter fjernet). Finn ID ved å slå opp ChatMessageType ordinal.\n\n" +
+                        "VARBIT/VARPLAYER Triggers:\n" +
+                        "  Specify both ID and target value (e.g. varbit 1234 = 1)\n" +
+                        "  Triggers when the varbit/varplayer changes to exactly that value\n\n" +
+                        "Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n"
         );
         p.add(new JScrollPane(infoArea), BorderLayout.CENTER);
         return p;
@@ -304,17 +381,21 @@ public class KPWebhookPresetDialog extends JDialog
     {
         if (r == null)
         {
-            commandsArea.setText(DEFAULT_COMMANDS);
+            // For nye scripts: tom kommando-boks (info finnes i Info-fanen)
+            commandsArea.setText("");
+            titleField.setText("");
             triggerTypeBox.setSelectedIndex(0);
             useDefaultWebhookBox.setSelected(false);
             customWebhookField.setText("");
             activeBox.setSelected(true);
+            if (categoryField != null) categoryField.setText("");
             updateTriggerVisibility();
             updateWebhookEnable();
             return;
         }
 
         titleField.setText(r.getTitle());
+        if (categoryField != null) categoryField.setText(r.getCategory()!=null? r.getCategory():"");
         if (r.getTriggerType()!=null)
             triggerTypeBox.setSelectedItem(r.getTriggerType().name());
         else
@@ -324,7 +405,7 @@ public class KPWebhookPresetDialog extends JDialog
         customWebhookField.setText(r.getWebhookUrl()!=null ? r.getWebhookUrl() : "");
 
         if (r.getCommands()==null || r.getCommands().trim().isEmpty())
-            commandsArea.setText(DEFAULT_COMMANDS);
+            commandsArea.setText(DEFAULT_COMMANDS_TEXT);
         else
             commandsArea.setText(r.getCommands());
 
@@ -348,6 +429,43 @@ public class KPWebhookPresetDialog extends JDialog
             else
                 widgetField.setText(String.valueOf(r.getWidgetConfig().getGroupId()));
         }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.PLAYER_SPAWN || r.getTriggerType()== KPWebhookPreset.TriggerType.PLAYER_DESPAWN)
+        {
+            KPWebhookPreset.PlayerConfig pc = r.getPlayerConfig();
+            if (pc!=null)
+            {
+                if (pc.isAll()) playerAllRadio.setSelected(true);
+                else if (pc.getName()!=null && !pc.getName().isBlank())
+                {
+                    playerNameRadio.setSelected(true);
+                    playerNameField.setText(pc.getName());
+                }
+                else if (pc.getCombatRange()!=null)
+                {
+                    playerCombatRadio.setSelected(true);
+                    playerCombatSpinner.setValue(pc.getCombatRange());
+                }
+            }
+        }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.ANIMATION_SELF && r.getAnimationConfig()!=null)
+        {
+            animationIdField.setText(String.valueOf(r.getAnimationConfig().getAnimationId()));
+        }
+        if (r.getTriggerType() == KPWebhookPreset.TriggerType.MESSAGE && r.getMessageConfig() != null)
+        {
+            if (r.getMessageConfig().getMessageId() != null)
+                messageIdSpinner.setValue(r.getMessageConfig().getMessageId());
+        }
+        if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARBIT && r.getVarbitConfig() != null)
+        {
+            varbitIdSpinner.setValue(r.getVarbitConfig().getVarbitId());
+            varbitValueSpinner.setValue(r.getVarbitConfig().getValue());
+        }
+        if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARPLAYER && r.getVarplayerConfig() != null)
+        {
+            varplayerIdSpinner.setValue(r.getVarplayerConfig().getVarplayerId());
+            varplayerValueSpinner.setValue(r.getVarplayerConfig().getValue());
+        }
     }
 
     /* ================= Save ================= */
@@ -355,6 +473,7 @@ public class KPWebhookPresetDialog extends JDialog
     {
         String title = titleField.getText().trim();
         if (title.isEmpty()) { JOptionPane.showMessageDialog(this, "Title cannot be empty"); return; }
+        String category = categoryField!=null? categoryField.getText().trim():""; // optional
         String cmds = commandsArea.getText().trim();
         if (cmds.isEmpty()) { JOptionPane.showMessageDialog(this, "Commands cannot be empty"); return; }
 
@@ -364,6 +483,11 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.TriggerType trig = KPWebhookPreset.TriggerType.valueOf(trigSel);
         KPWebhookPreset.StatConfig statCfg = null;
         KPWebhookPreset.WidgetConfig widgetCfg = null;
+        KPWebhookPreset.PlayerConfig playerCfg = null;
+        KPWebhookPreset.AnimationConfig animationCfg = null;
+        KPWebhookPreset.MessageConfig messageCfg = null;
+        KPWebhookPreset.VarbitConfig varbitCfg = null;
+        KPWebhookPreset.VarplayerConfig varplayerCfg = null;
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -399,6 +523,58 @@ public class KPWebhookPresetDialog extends JDialog
             { JOptionPane.showMessageDialog(this, "Invalid widget format. Use group or group:child."); return; }
             widgetCfg = KPWebhookPreset.WidgetConfig.builder().groupId(group).childId(child).build();
         }
+        else if (trig == KPWebhookPreset.TriggerType.PLAYER_SPAWN || trig == KPWebhookPreset.TriggerType.PLAYER_DESPAWN)
+        {
+            if (playerAllRadio.isSelected())
+            {
+                playerCfg = KPWebhookPreset.PlayerConfig.builder().all(true).build();
+            }
+            else if (playerNameRadio.isSelected())
+            {
+                String name = playerNameField.getText().trim();
+                if (name.isEmpty()) { JOptionPane.showMessageDialog(this, "Player name cannot be empty"); return; }
+                playerCfg = KPWebhookPreset.PlayerConfig.builder().all(false).name(name).build();
+            }
+            else if (playerCombatRadio.isSelected())
+            {
+                int range = (Integer) playerCombatSpinner.getValue();
+                playerCfg = KPWebhookPreset.PlayerConfig.builder().all(false).combatRange(range).build();
+            }
+            else
+            {
+                JOptionPane.showMessageDialog(this, "Select player option (ALL, Name or +/- range)"); return;
+            }
+        }
+        else if (trig == KPWebhookPreset.TriggerType.ANIMATION_SELF)
+        {
+            int animId = 0;
+            try { animId = Integer.parseInt(animationIdField.getText().trim()); }
+            catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid animation ID"); return; }
+            animationCfg = KPWebhookPreset.AnimationConfig.builder().animationId(animId).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.MESSAGE)
+        {
+            int messageId = 0;
+            try { messageId = Integer.parseInt(messageIdSpinner.getValue().toString().trim()); }
+            catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid message ID"); return; }
+            messageCfg = KPWebhookPreset.MessageConfig.builder().messageId(messageId).messageText(null).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.VARBIT)
+        {
+            int varbitId = 0;
+            try { varbitId = Integer.parseInt(varbitIdSpinner.getValue().toString().trim()); }
+            catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid varbit ID"); return; }
+            int varbitValue = (Integer) varbitValueSpinner.getValue();
+            varbitCfg = KPWebhookPreset.VarbitConfig.builder().varbitId(varbitId).value(varbitValue).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.VARPLAYER)
+        {
+            int varplayerId = 0;
+            try { varplayerId = Integer.parseInt(varplayerIdSpinner.getValue().toString().trim()); }
+            catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid varplayer ID"); return; }
+            int varplayerValue = (Integer) varplayerValueSpinner.getValue();
+            varplayerCfg = KPWebhookPreset.VarplayerConfig.builder().varplayerId(varplayerId).value(varplayerValue).build();
+        }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
         String custom = customWebhookField.getText(); if (custom == null) custom = "";
@@ -409,7 +585,7 @@ public class KPWebhookPresetDialog extends JDialog
             if (eff == null)
             {
                 JOptionPane.showMessageDialog(this,
-                        "WEBHOOK/SCREENSHOT kommando funnet, men ingen standard eller custom webhook er satt.",
+                        "WEBHOOK or SCREENSHOT command found but no default or custom webhook is configured.",
                         "Validation",
                         JOptionPane.WARNING_MESSAGE);
                 return;
@@ -419,6 +595,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.KPWebhookPresetBuilder b = KPWebhookPreset.builder()
                 .id(existing != null ? existing.getId() : -1)
                 .title(title)
+                .category(category.isEmpty()?null:category)
                 .triggerType(trig)
                 .statConfig(statCfg)
                 .widgetConfig(widgetCfg)
@@ -446,14 +623,28 @@ public class KPWebhookPresetDialog extends JDialog
                 .textOverBlink(textOverPanel.isBlink())
                 .textOverSize(textOverPanel.getSizeValue())
                 .textOverDuration(textOverPanel.getDuration())
+                .textOverBold(textOverPanel.isBold())
+                .textOverItalic(textOverPanel.isItalic())
+                .textOverUnderline(textOverPanel.isUnderline())
                 .textCenterColor(textCenterPanel.getColorHex())
                 .textCenterBlink(textCenterPanel.isBlink())
                 .textCenterSize(textCenterPanel.getSizeValue())
                 .textCenterDuration(textCenterPanel.getDuration())
+                .textCenterBold(textCenterPanel.isBold())
+                .textCenterItalic(textCenterPanel.isItalic())
+                .textCenterUnderline(textCenterPanel.isUnderline())
                 .textUnderColor(textUnderPanel.getColorHex())
                 .textUnderBlink(textUnderPanel.isBlink())
                 .textUnderSize(textUnderPanel.getSizeValue())
-                .textUnderDuration(textUnderPanel.getDuration());
+                .textUnderDuration(textUnderPanel.getDuration())
+                .textUnderBold(textUnderPanel.isBold())
+                .textUnderItalic(textUnderPanel.isItalic())
+                .textUnderUnderline(textUnderPanel.isUnderline())
+                .playerConfig(playerCfg)
+                .animationConfig(animationCfg)
+                .messageConfig(messageCfg)
+                .varbitConfig(varbitCfg)
+                .varplayerConfig(varplayerCfg);
 
         result = b.build();
         dispose();
@@ -489,10 +680,10 @@ public class KPWebhookPresetDialog extends JDialog
     private void showHelp()
     {
         String msg =
-                "Kommandoer: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*\n" +
-                "Settings: Alle highlight og text seksjoner vises samtidig.\n" +
-                "Blink = av/på hvert tick.\n" +
-                "Fargevelger: klikk knappen eller skriv hex (#RRGGBB).";
+                "Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*\n" +
+                "Use the Settings tab to configure highlight & text visuals.\n" +
+                "Blink toggles visibility each tick.\n" +
+                "Color: click the swatch or 'Custom' for custom #RRGGBB.";
         JOptionPane.showMessageDialog(this, msg, "Help", JOptionPane.INFORMATION_MESSAGE);
     }
 
@@ -515,32 +706,41 @@ public class KPWebhookPresetDialog extends JDialog
             setOpaque(false);
             this.storedWidth = storedWidth<=0?2:storedWidth;
             GridBagConstraints c = new GridBagConstraints();
-            c.insets = new Insets(2,4,2,4);
+            c.insets = new Insets(3,4,3,4); // uniform insets
             c.fill = GridBagConstraints.HORIZONTAL;
             c.anchor = GridBagConstraints.WEST;
             c.weightx = 1;
             int y=0;
-            c.gridx=0; c.gridy=y; c.weightx=0; add(new JLabel("Duration"), c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,1000,1));
+            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(durLbl, c);
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,5000,1));
             Dimension sd = durationSpinner.getPreferredSize();
-            durationSpinner.setPreferredSize(new Dimension(70, sd.height));
-            c.gridx=1; c.weightx=1; add(durationSpinner, c); y++;
-            c.gridx=0; c.gridy=y; c.weightx=0; add(new JLabel("Blink"), c);
-            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0));
+            durationSpinner.setPreferredSize(new Dimension(60, sd.height));
+            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
+            durRow.add(durationSpinner);
+            durRow.add(new JLabel("ticks"));
+            c.gridx=1; c.weightx=1; add(durRow, c); y++;
+            JLabel blinkLbl = new JLabel("Blink"); blinkLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(blinkLbl, c);
+            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0)); blinkBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             c.gridx=1; add(blinkBox,c); y++;
-            c.gridx=0; c.gridy=y; c.weightx=0; add(new JLabel("Color"), c);
+            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(colorLbl, c);
             selectedColor = parse(colorHex, Color.YELLOW);
             colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
-            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0));
+            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false);
             JButton customBtn = new JButton("Custom");
-            customBtn.setMargin(new Insets(2,4,2,4));
+            customBtn.setMargin(new Insets(2,6,2,6));
+            customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             customBtn.addActionListener(e -> {
-                Color picked = JColorChooser.showDialog(this, "Velg farge", selectedColor);
+                Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor);
                 if (picked != null) setSelectedColor(picked);
             });
             colorRow.add(colorPreview);
             colorRow.add(customBtn);
             c.gridx=1; add(colorRow, c);
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
         }
         private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
         private static Color parse(String hex, Color def){ try{ if(hex==null) return def; String h=hex.trim(); if(!h.startsWith("#")) h="#"+h; if(h.length()==7){return new Color(Integer.parseInt(h.substring(1,3),16),Integer.parseInt(h.substring(3,5),16),Integer.parseInt(h.substring(5,7),16));}}catch(Exception ignored){} return def; }
@@ -555,50 +755,170 @@ public class KPWebhookPresetDialog extends JDialog
         private final JSpinner durationSpinner;
         private final JSpinner sizeSpinner;
         private final JCheckBox blinkBox;
+        private final JCheckBox boldBox;
+        private final JCheckBox italicBox;
+        private final JCheckBox underlineBox;
         private final ColorPreview colorPreview;
         private Color selectedColor;
-        TextCategoryPanel(int duration, int size, String colorHex, boolean blink, String title)
+        TextCategoryPanel(int duration, int size, String colorHex, boolean blink, boolean bold, boolean italic, boolean underline, String title)
         {
             super(new GridBagLayout());
             setBorder(new TitledBorder(title));
             setOpaque(false);
             GridBagConstraints c = new GridBagConstraints();
-            c.insets = new Insets(2,4,2,4);
+            c.insets = new Insets(3,4,3,4); // uniform insets
             c.fill = GridBagConstraints.HORIZONTAL;
             c.anchor = GridBagConstraints.WEST;
             c.weightx = 1;
             int y=0;
-            c.gridx=0; c.gridy=y; add(new JLabel("Duration"), c);
+            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(durLbl, c);
             durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,5000,1));
             Dimension ds = durationSpinner.getPreferredSize();
-            durationSpinner.setPreferredSize(new Dimension(70, ds.height));
-            c.gridx=1; add(durationSpinner, c); y++;
-            c.gridx=0; c.gridy=y; add(new JLabel("Size"), c);
+            durationSpinner.setPreferredSize(new Dimension(60, ds.height));
+            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
+            durRow.add(durationSpinner);
+            durRow.add(new JLabel("ticks"));
+            c.gridx=1; add(durRow, c); y++;
+            JLabel sizeLbl = new JLabel("Size"); sizeLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(sizeLbl, c);
             sizeSpinner = new JSpinner(new SpinnerNumberModel(size,8,72,1));
             Dimension ss = sizeSpinner.getPreferredSize();
-            sizeSpinner.setPreferredSize(new Dimension(70, ss.height));
+            sizeSpinner.setPreferredSize(new Dimension(60, ss.height));
             c.gridx=1; add(sizeSpinner, c); y++;
-            c.gridx=0; c.gridy=y; add(new JLabel("Blink"), c);
-            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0)); c.gridx=1; add(blinkBox, c); y++;
-            c.gridx=0; c.gridy=y; add(new JLabel("Color"), c);
+            JLabel blinkOnlyLbl = new JLabel("Blink"); blinkOnlyLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(blinkOnlyLbl, c);
+            blinkBox = new JCheckBox(); blinkBox.setMargin(new Insets(0,0,0,0)); blinkBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            blinkBox.setSelected(blink);
+            c.gridx=1; add(blinkBox, c); y++;
+            JLabel styleLbl = new JLabel("Style"); styleLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            JPanel styleRow = new JPanel(new FlowLayout(FlowLayout.LEFT,12,0)); styleRow.setOpaque(false); // more space between boxes
+            boldBox = new JCheckBox("B", bold); boldBox.setToolTipText("Bold"); boldBox.setMargin(new Insets(0,0,0,0));
+            italicBox = new JCheckBox("I", italic); italicBox.setToolTipText("Italic"); italicBox.setMargin(new Insets(0,0,0,0));
+            underlineBox = new JCheckBox("U", underline); underlineBox.setToolTipText("Underline"); underlineBox.setMargin(new Insets(0,0,0,0));
+            for (JCheckBox cb : new JCheckBox[]{boldBox,italicBox,underlineBox}) cb.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            styleRow.add(boldBox); styleRow.add(italicBox); styleRow.add(underlineBox);
+            c.gridx=0; c.gridy=y; add(styleLbl, c); c.gridx=1; add(styleRow, c); y++;
+            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(colorLbl, c);
             selectedColor = HighlightCategoryPanel.parse(colorHex, Color.WHITE);
             colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
-            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0));
-            JButton customBtn = new JButton("Custom");
-            customBtn.setMargin(new Insets(2,4,2,4));
-            customBtn.addActionListener(e -> {
-                Color picked = JColorChooser.showDialog(this, "Velg farge", selectedColor);
-                if (picked != null) setSelectedColor(picked);
-            });
-            colorRow.add(colorPreview);
-            colorRow.add(customBtn);
+            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false);
+            JButton customBtn = new JButton("Custom"); customBtn.setMargin(new Insets(2,6,2,6));
+            customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            customBtn.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor); if (picked!=null) setSelectedColor(picked); });
+            colorRow.add(colorPreview); colorRow.add(customBtn);
             c.gridx=1; add(colorRow, c);
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
         }
         private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
         int getDuration(){ return (Integer)durationSpinner.getValue(); }
         int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
         boolean isBlink(){ return blinkBox.isSelected(); }
+        boolean isBold(){ return boldBox.isSelected(); }
+        boolean isItalic(){ return italicBox.isSelected(); }
+        boolean isUnderline(){ return underlineBox.isSelected(); }
         String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+    }
+
+    /** Screenshot panel for configuring screenshot-specific options */
+    private static class ScreenshotCategoryPanel extends JPanel
+    {
+        private final JSpinner delaySpinner;
+        private final JCheckBox notifyBox;
+        private final JSpinner qualitySpinner;
+        private final JSpinner widthSpinner;
+        private final JSpinner heightSpinner;
+        private final JCheckBox hideTooltipsBox;
+
+        ScreenshotCategoryPanel(int delay, boolean notify, int quality, int width, int height, boolean hideTooltips)
+        {
+            super(new GridBagLayout());
+            setBorder(new TitledBorder("SCREENSHOT"));
+            setOpaque(false);
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(3,4,3,4);
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST;
+            c.weightx = 1;
+            int y=0;
+
+            // Delay
+            JLabel delayLbl = new JLabel("Delay");
+            delayLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(delayLbl, c);
+            delaySpinner = new JSpinner(new SpinnerNumberModel(delay,0,5000,10));
+            Dimension ds = delaySpinner.getPreferredSize();
+            delaySpinner.setPreferredSize(new Dimension(60, ds.height));
+            JPanel delayRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0));
+            delayRow.setOpaque(false);
+            delayRow.add(delaySpinner);
+            delayRow.add(new JLabel("ms"));
+            c.gridx=1; c.weightx=1; add(delayRow, c); y++;
+
+            // Notify
+            JLabel notifyLbl = new JLabel("Notify on capture");
+            notifyLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(notifyLbl, c);
+            notifyBox = new JCheckBox();
+            notifyBox.setSelected(notify);
+            notifyBox.setMargin(new Insets(0,0,0,0));
+            notifyBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=1; add(notifyBox,c); y++;
+
+            // Quality
+            JLabel qualityLbl = new JLabel("Quality");
+            qualityLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(qualityLbl, c);
+            qualitySpinner = new JSpinner(new SpinnerNumberModel(quality,10,100,5));
+            Dimension qs = qualitySpinner.getPreferredSize();
+            qualitySpinner.setPreferredSize(new Dimension(60, qs.height));
+            JPanel qualityRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0));
+            qualityRow.setOpaque(false);
+            qualityRow.add(qualitySpinner);
+            qualityRow.add(new JLabel("%"));
+            c.gridx=1; c.weightx=1; add(qualityRow, c); y++;
+
+            // Width
+            JLabel widthLbl = new JLabel("Width");
+            widthLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(widthLbl, c);
+            widthSpinner = new JSpinner(new SpinnerNumberModel(width, 100, 4096, 10));
+            Dimension ws = widthSpinner.getPreferredSize();
+            widthSpinner.setPreferredSize(new Dimension(70, ws.height));
+            c.gridx=1; add(widthSpinner, c); y++;
+
+            // Height
+            JLabel heightLbl = new JLabel("Height");
+            heightLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(heightLbl, c);
+            heightSpinner = new JSpinner(new SpinnerNumberModel(height, 100, 4096, 10));
+            Dimension hs = heightSpinner.getPreferredSize();
+            heightSpinner.setPreferredSize(new Dimension(70, hs.height));
+            c.gridx=1; add(heightSpinner, c); y++;
+
+            // Hide tooltips checkbox
+            JLabel tooltipLbl = new JLabel("Skjul tooltips");
+            tooltipLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; c.weightx=0; add(tooltipLbl, c);
+            hideTooltipsBox = new JCheckBox();
+            hideTooltipsBox.setSelected(hideTooltips);
+            hideTooltipsBox.setMargin(new Insets(0,0,0,0));
+            hideTooltipsBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=1; add(hideTooltipsBox,c); y++;
+
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
+        }
+
+        int getDelay(){ return (Integer)delaySpinner.getValue(); }
+        boolean isNotify(){ return notifyBox.isSelected(); }
+        int getQuality(){ return (Integer)qualitySpinner.getValue(); }
+        int getScreenWidth(){ return (Integer)widthSpinner.getValue(); }
+        int getScreenHeight(){ return (Integer)heightSpinner.getValue(); }
+        boolean isHideTooltips(){ return hideTooltipsBox.isSelected(); }
+        void setHideTooltips(boolean b){ hideTooltipsBox.setSelected(b); }
     }
 
     private static class ColorPreview extends JPanel
@@ -648,32 +968,47 @@ public class KPWebhookPresetDialog extends JDialog
     {
         private final JPanel content;
         private boolean expanded = false;
+        private final JButton header;
+        private final String title;
         CollapsibleSection(JPanel inner)
         {
-            setLayout(new BorderLayout());
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setOpaque(false);
             this.content = inner;
-            String title = inner instanceof HighlightCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle() : (inner instanceof TextCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle():"Section");
-            inner.setBorder(null);
-            JButton header = new JButton("[+] " + title);
+            this.title = inner instanceof HighlightCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle() : (inner instanceof TextCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle() : "Section");
+            inner.setBorder(null); // remove original titled border for compact layout
+            header = new JButton(labelText());
             header.setFocusPainted(false);
             header.setHorizontalAlignment(SwingConstants.LEFT);
-            header.setMargin(new Insets(2,6,2,6));
-            header.addActionListener(e -> toggle(header, title));
-            add(header, BorderLayout.NORTH);
+            header.setBorderPainted(false);
+            header.setContentAreaFilled(false);
+            header.setOpaque(false);
+            header.setMargin(new Insets(0,4,0,4));
+            header.setFont(FontManager.getRunescapeBoldFont().deriveFont(16f));
+            header.addActionListener(e -> toggle());
+            add(header);
+            setAlignmentX(Component.LEFT_ALIGNMENT);
         }
-        private void toggle(JButton header, String title)
+        private String labelText(){ return (expanded ? "[-] " : "[+] ") + title; }
+        private void toggle()
         {
             expanded = !expanded;
-            removeAll();
-            add(header, BorderLayout.NORTH);
-            header.setText((expanded?"[-] ":"[+] ") + title);
+            header.setText(labelText());
             if (expanded)
             {
-                JPanel wrap = new JPanel(new BorderLayout());
-                wrap.setBorder(new EmptyBorder(4,20,4,4));
-                wrap.add(content, BorderLayout.CENTER);
-                add(wrap, BorderLayout.CENTER);
+                JPanel wrap = new JPanel();
+                wrap.setLayout(new BoxLayout(wrap, BoxLayout.Y_AXIS));
+                wrap.setOpaque(false);
+                wrap.setBorder(new EmptyBorder(4,18,6,4));
+                content.setAlignmentX(Component.LEFT_ALIGNMENT);
+                wrap.add(content);
+                wrap.setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH, wrap.getPreferredSize().height));
+                wrap.setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH, wrap.getPreferredSize().height));
+                add(wrap);
+            }
+            else
+            {
+                while (getComponentCount() > 1) remove(1);
             }
             revalidate();
             repaint();
@@ -726,9 +1061,100 @@ public class KPWebhookPresetDialog extends JDialog
         w.gridx=0; w.gridy=wy; w.weightx=0; widgetCard.add(new JLabel("Widget (group[:child])"), w);
         widgetField = new JTextField();
         w.gridx=1; w.weightx=1; widgetCard.add(widgetField, w); wy++;
+        // PLAYER card (shared for spawn & despawn)
+        playerCard = new JPanel(new GridBagLayout());
+        GridBagConstraints p = new GridBagConstraints();
+        p.insets = new Insets(4,4,4,4);
+        p.fill = GridBagConstraints.HORIZONTAL;
+        p.anchor = GridBagConstraints.WEST;
+        p.weightx = 1;
+        int py=0;
+        ButtonGroup grp = new ButtonGroup();
+        playerAllRadio = new JRadioButton("ALL players");
+        playerNameRadio = new JRadioButton("Specific name:");
+        playerCombatRadio = new JRadioButton("Combat level +/-");
+        grp.add(playerAllRadio); grp.add(playerNameRadio); grp.add(playerCombatRadio);
+        playerAllRadio.setSelected(true);
+        p.gridx=0; p.gridy=py++; p.gridwidth=2; playerCard.add(playerAllRadio, p); p.gridwidth=1;
+        p.gridx=0; p.gridy=py; playerCard.add(playerNameRadio, p);
+        playerNameField = new JTextField();
+        p.gridx=1; playerCard.add(playerNameField, p); py++;
+        p.gridx=0; p.gridy=py; playerCard.add(playerCombatRadio, p);
+        playerCombatSpinner = new JSpinner(new SpinnerNumberModel(5,0,126,1));
+        p.gridx=1; playerCard.add(playerCombatSpinner, p); py++;
+        Runnable upd = () -> {
+            playerNameField.setEnabled(playerNameRadio.isSelected());
+            playerCombatSpinner.setEnabled(playerCombatRadio.isSelected());
+        }; upd.run();
+        playerAllRadio.addActionListener(e -> upd.run());
+        playerNameRadio.addActionListener(e -> upd.run());
+        playerCombatRadio.addActionListener(e -> upd.run());
+        // ANIMATION card
+        animationCard = new JPanel(new GridBagLayout());
+        GridBagConstraints a = new GridBagConstraints();
+        a.insets = new Insets(4,4,4,4);
+        a.fill = GridBagConstraints.HORIZONTAL;
+        a.anchor = GridBagConstraints.WEST;
+        a.weightx = 1;
+        int ay=0;
+        a.gridx=0; a.gridy=ay; a.weightx=0; animationCard.add(new JLabel("Animation ID"), a);
+        animationIdField = new JTextField();
+        a.gridx=1; a.weightx=1; animationCard.add(animationIdField, a); ay++;
+        // MESSAGE card
+        messageCard = new JPanel(new GridBagLayout());
+        GridBagConstraints m = new GridBagConstraints();
+        m.insets = new Insets(4,4,4,4);
+        m.fill = GridBagConstraints.HORIZONTAL;
+        m.anchor = GridBagConstraints.WEST;
+        m.weightx = 1;
+        int my=0;
+        m.gridx=0; m.gridy=my; m.weightx=0; messageCard.add(new JLabel("Message ID"), m);
+        messageIdSpinner = new JSpinner(new SpinnerNumberModel(0,0,9999,1));
+        Dimension mid = messageIdSpinner.getPreferredSize();
+        messageIdSpinner.setPreferredSize(new Dimension(80, mid.height));
+        m.gridx=1; m.weightx=1; messageCard.add(messageIdSpinner, m); my++;
+        // VARBIT card
+        varbitCard = new JPanel(new GridBagLayout());
+        GridBagConstraints vb = new GridBagConstraints();
+        vb.insets = new Insets(4,4,4,4);
+        vb.fill = GridBagConstraints.HORIZONTAL;
+        vb.anchor = GridBagConstraints.WEST;
+        vb.weightx = 1;
+        int vy=0;
+        vb.gridx=0; vb.gridy=vy; vb.weightx=0; varbitCard.add(new JLabel("Varbit ID"), vb);
+        varbitIdSpinner = new JSpinner(new SpinnerNumberModel(0,0,32767,1));
+        Dimension vid = varbitIdSpinner.getPreferredSize();
+        varbitIdSpinner.setPreferredSize(new Dimension(80, vid.height));
+        vb.gridx=1; vb.weightx=1; varbitCard.add(varbitIdSpinner, vb); vy++;
+        vb.gridx=0; vb.gridy=vy; vb.weightx=0; varbitCard.add(new JLabel("Value"), vb);
+        varbitValueSpinner = new JSpinner(new SpinnerNumberModel(0,0,255,1));
+        vb.gridx=1; vb.weightx=1; varbitCard.add(varbitValueSpinner, vb); vy++;
+        // VARPLAYER card
+        varplayerCard = new JPanel(new GridBagLayout());
+        GridBagConstraints vp = new GridBagConstraints();
+        vp.insets = new Insets(4,4,4,4);
+        vp.fill = GridBagConstraints.HORIZONTAL;
+        vp.anchor = GridBagConstraints.WEST;
+        vp.weightx = 1;
+        int vpy=0;
+        vp.gridx=0; vp.gridy=vpy; vp.weightx=0; varplayerCard.add(new JLabel("Varplayer ID"), vp);
+        varplayerIdSpinner = new JSpinner(new SpinnerNumberModel(0,0,32767,1));
+        Dimension pid = varplayerIdSpinner.getPreferredSize();
+        varplayerIdSpinner.setPreferredSize(new Dimension(80, pid.height));
+        vp.gridx=1; vp.weightx=1; varplayerCard.add(varplayerIdSpinner, vp); vpy++;
+        vp.gridx=0; vp.gridy=vpy; vp.weightx=0; varplayerCard.add(new JLabel("Value"), vp);
+        varplayerValueSpinner = new JSpinner(new SpinnerNumberModel(0,0,255,1));
+        vp.gridx=1; vp.weightx=1; varplayerCard.add(varplayerValueSpinner, vp); vpy++;
+        // removed message text field (was messageTextField) so layout ends here
+        // Add cards
         cards.add(new JPanel(), "NONE");
         cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
         cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET.name());
+        cards.add(playerCard, "PLAYER");
+        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
+        cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
+        cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
+        cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
         return cards;
     }
 
@@ -737,9 +1163,21 @@ public class KPWebhookPresetDialog extends JDialog
         CardLayout cl = (CardLayout) (triggerCards.getLayout());
         String sel = (String) triggerTypeBox.getSelectedItem();
         if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel))
+        {
             cl.show(triggerCards, "NONE");
+        }
+        else if (KPWebhookPreset.TriggerType.PLAYER_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.PLAYER_DESPAWN.name().equals(sel))
+        {
+            cl.show(triggerCards, "PLAYER");
+        }
         else
+        {
             cl.show(triggerCards, sel);
+        }
+        // keep panel always visible for stable layout
+        if (triggerDetailsPanel != null && !triggerDetailsPanel.isVisible())
+            triggerDetailsPanel.setVisible(true);
+        if (triggerDetailsPanel != null) { triggerDetailsPanel.revalidate(); triggerDetailsPanel.repaint(); }
         updateStatEnable();
     }
 
@@ -762,3 +1200,4 @@ public class KPWebhookPresetDialog extends JDialog
             cl.show(levelHolderCard, LEVEL_CARD_EMPTY);
     }
 }
+

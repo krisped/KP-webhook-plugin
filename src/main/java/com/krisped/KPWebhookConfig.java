@@ -3,6 +3,7 @@ package com.krisped;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
 
 @ConfigGroup("kpwebhook")
 public interface KPWebhookConfig extends Config
@@ -16,4 +17,19 @@ public interface KPWebhookConfig extends Config
     {
         return "";
     }
+
+    @ConfigSection(
+            name = "Screenshots",
+            description = "Innstillinger for skjermbilder",
+            position = 10
+    )
+    String screenshotSection = "screenshots";
+
+    @ConfigItem(
+            keyName = "hideTooltipsInScreenshots",
+            name = "Skjul tooltips",
+            description = "Fjern muse-tooltip fra skjermbilder tatt av plugin.",
+            section = screenshotSection
+    )
+    default boolean hideTooltipsInScreenshots() { return true; }
 }
