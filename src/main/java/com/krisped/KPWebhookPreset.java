@@ -17,6 +17,8 @@ public class KPWebhookPreset
         WIDGET,
         PLAYER_SPAWN,
         PLAYER_DESPAWN,
+        NPC_SPAWN, // new
+        NPC_DESPAWN, // new
         ANIMATION_SELF,
         MESSAGE,
         VARBIT,
@@ -110,6 +112,17 @@ public class KPWebhookPreset
         private Integer value;
     }
 
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class NpcConfig {
+        private String rawList; // original comma separated list
+        private java.util.List<Integer> npcIds; // parsed numeric ids
+        private java.util.List<String> npcNames; // lower-case underscore names
+    }
+
     @Builder.Default
     private int id = -1;
 
@@ -123,6 +136,7 @@ public class KPWebhookPreset
     private MessageConfig messageConfig;
     private VarbitConfig varbitConfig;
     private VarplayerConfig varplayerConfig;
+    private NpcConfig npcConfig; // new optional npc config
 
     private String webhookUrl;
     @Builder.Default
@@ -138,6 +152,8 @@ public class KPWebhookPreset
     private boolean lastConditionMet = false;
     @Builder.Default
     private int lastSeenRealLevel = -1;
+    @Builder.Default
+    private int lastTriggeredBoosted = Integer.MIN_VALUE; // new: last boosted value that triggered while condition true
 
     // =========== Highlight OUTLINE settings ===========
     @Builder.Default
@@ -266,6 +282,20 @@ public class KPWebhookPreset
         }
         switch (triggerType)
         {
+            case NPC_SPAWN:
+            case NPC_DESPAWN:
+                if (npcConfig == null || ((npcConfig.getNpcIds()==null || npcConfig.getNpcIds().isEmpty()) && (npcConfig.getNpcNames()==null || npcConfig.getNpcNames().isEmpty()))) {
+                    return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN":"NPC_DESPAWN") + " ?";
+                }
+                String src = npcConfig.getRawList()!=null? npcConfig.getRawList():"";
+                return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN ":"NPC_DESPAWN ") + (src.length()>30? src.substring(0,27)+"...":src);
+            default:
+                // fall back to existing switch below
+                break;
+        }
+        // original switch content kept
+        switch (triggerType)
+        {
             case MANUAL:
                 return "Manual";
             case STAT:
@@ -365,6 +395,10 @@ public class KPWebhookPreset
                 return varplayerResult;
             case TICK:
                 return "TICK (continuous)";
+            case NPC_SPAWN:
+            case NPC_DESPAWN:
+                // already handled above, keep default fallback
+                return "NPC";
             default:
                 return "?";
         }

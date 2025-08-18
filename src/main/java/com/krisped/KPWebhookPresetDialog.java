@@ -4,8 +4,7 @@ import net.runelite.api.Skill;
 import net.runelite.client.ui.FontManager;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.border.TitledBorder;
+import javax.swing.border.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
@@ -59,6 +58,7 @@ public class KPWebhookPresetDialog extends JDialog
     // Message trigger components
     private JPanel messageCard;
     private JSpinner messageIdSpinner; // now only ID spinner
+    private JTextField messageTextField; // NEW: text pattern field
     // Varbit trigger components
     private JPanel varbitCard;
     private JSpinner varbitIdSpinner;
@@ -74,6 +74,8 @@ public class KPWebhookPresetDialog extends JDialog
     private JCheckBox activeBox;
     // Holder for trigger details panel to toggle visibility
     private JPanel triggerDetailsPanel;
+    private JPanel npcCard; // new NPC trigger card
+    private JTextField npcListField; // raw list field
 
     /* -------- Settings Tab (kategorier) -------- */
     private JPanel settingsRoot;
@@ -88,7 +90,7 @@ public class KPWebhookPresetDialog extends JDialog
     private InfoboxCategoryPanel infoboxPanel; // new infobox panel
     // Screenshot settings removed - keeping it simple
     /* -------- Info Tab -------- */
-    private JTextArea infoArea;
+    private JEditorPane infoPane; // replaced JTextArea
 
     private KPWebhookPreset result;
 
@@ -121,14 +123,21 @@ public class KPWebhookPresetDialog extends JDialog
                                  KPWebhookPlugin plugin,
                                  KPWebhookPreset existing)
     {
-        super(owner, existing == null ? "Create" : "Edit", ModalityType.APPLICATION_MODAL);
+        super(owner, existing == null ? "Preset" : "Preset", ModalityType.APPLICATION_MODAL);
         this.plugin = plugin;
         this.existing = existing;
         buildUI();
         populate(existing);
+        updateHeader();
         pack();
-        setMinimumSize(new Dimension(820, 600));
+        // Increase height by 25% (from 480 -> 600)
+        setMinimumSize(new Dimension(720, 600));
+        setSize(new Dimension(720, 600));
         setLocationRelativeTo(owner);
+        // Live update header when user edits Title field
+        if (titleField != null) {
+            titleField.getDocument().addDocumentListener(new SimpleDoc(){ @Override protected void changed(){ updateHeader(); }});
+        }
     }
 
     public KPWebhookPreset getResult()
@@ -145,10 +154,10 @@ public class KPWebhookPresetDialog extends JDialog
         tabs.addTab("Info", buildInfoTab());
 
         JPanel root = new JPanel(new BorderLayout(10,10));
-        root.setBorder(new EmptyBorder(12,12,12,12));
+        root.setBorder(new EmptyBorder(10,10,10,10));
+        // Removed headerLabel from NORTH
         root.add(tabs, BorderLayout.CENTER);
         root.add(buildButtons(), BorderLayout.SOUTH);
-
         setContentPane(root);
     }
 
@@ -217,8 +226,8 @@ public class KPWebhookPresetDialog extends JDialog
         // add group to main panel
         g.gridx=0; g.gridy=y; g.gridwidth=2; panel.add(webhookGroup, g); y++; g.gridwidth=1;
 
-        // Commands area (titled border, absorbs extra vertical space)
-        commandsArea = new JTextArea(14, 60);
+        // Commands area (titled border, absorbs extra vertical space) - reduced rows for compact dialog
+        commandsArea = new JTextArea(8, 60);
         commandsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         JScrollPane sp = new JScrollPane(commandsArea);
         sp.setBorder(new TitledBorder("Commands"));
@@ -335,71 +344,86 @@ public class KPWebhookPresetDialog extends JDialog
     private JPanel buildInfoTab()
     {
         JPanel p = new JPanel(new BorderLayout());
-        infoArea = new JTextArea();
-        infoArea.setEditable(false);
-        infoArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        infoArea.setText(
-                "KP Webhook Plugin - Commands & Triggers\n" +
-                        "====================================\n\n" +
-                        "Commands (one per line in the Commands box):\n" +
-                        "  NOTIFY <text>               In‑game chat notification (tokens allowed)\n" +
-                        "  WEBHOOK <text>              Send text to effective webhook (default/custom)\n" +
-                        "  SCREENSHOT [text]           Capture client & upload (optional caption)\n" +
-                        "  HIGHLIGHT_OUTLINE           Outline local player (duration / blink / color in Settings)\n" +
-                        "  HIGHLIGHT_TILE              Highlight tile under local player\n" +
-                        "  HIGHLIGHT_HULL              Player hull highlight\n" +
-                        "  HIGHLIGHT_MINIMAP           Minimap marker (reserved – still configurable)\n" +
-                        "  TEXT_OVER <text>            Overhead text above player\n" +
-                        "  TEXT_CENTER <text>          Centered text on player position\n" +
-                        "  TEXT_UNDER <text>           Text under player feet\n" +
-                        "  OVERLAY_TEXT <text>         Screen overlay text box (top center). Style (color/size/duration) set in Settings.\n" +
-                        "  INFOBOX <id> [message]     Show icon: positive=item ID, negative=sprite ID; optional tooltip text after id\n" +
-                        "  SLEEP <ms>                  Millisecond delay in a sequence\n" +
-                        "  TICK [n]                    Wait n game ticks (default 1) inside a sequence\n" +
-                        "  STOP                        Stop all active sequences & visuals\n" +
-                        "\n" +
-                        "Triggers (choose in Preset tab):\n" +
-                        "  MANUAL                      Only runs when manually triggered\n" +
-                        "  STAT                        Skill condition (LEVEL_UP / ABOVE / BELOW threshold)\n" +
-                        "  WIDGET                      When widget group (and optional child) appears\n" +
-                        "  PLAYER_SPAWN                Player spawn (ALL / name / combat +/- range)\n" +
-                        "  PLAYER_DESPAWN              Player despawn (same matching rules)\n" +
-                        "  ANIMATION_SELF              Your player performs specific animation ID\n" +
-                        "  MESSAGE                     Chat message type ID occurs (use ordinal)\n" +
-                        "  VARBIT                      Varbit changes to value\n" +
-                        "  VARPLAYER                   Varplayer changes to value\n" +
-                        "  TICK                        Re-applies visual commands every tick (durations ignored)\n" +
-                        "\n" +
-                        "Tokens available in text commands: \n" +
-                        "  {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n" +
-                        "\n" +
-                        "INFOBOX Usage & Testing:\n" +
-                        "  1. Open or create a preset.\n" +
-                        "  2. In Commands area add a line: INFOBOX 4151 YOU NEED ABYSSAL WHIP FOR THIS RUN\n" +
-                        "     Or a sprite: INFOBOX -502 Custom sprite tooltip text\n" +
-                        "  3. Open Settings > Infobox section: set Duration (ticks).\n" +
-                        "  4. Choose a Trigger (e.g. MANUAL) and Save.\n" +
-                        "  5. Trigger preset – icon appears; hover for your custom tooltip.\n" +
-                        "  6. Multiple INFOBOX lines stack.\n" +
-                        "\n" +
-                        "Durations: Visual commands use configured durations unless Trigger is TICK (then they refresh).\n" +
-                        "Blink: Toggles visibility each tick for that visual element.\n" +
-                        "Color: Applies tint to text/highlight; for INFOBOX it tints (or colorizes overlay label if implemented).\n" +
-                        "\n" +
-                        "Examples:\n" +
-                        "  NOTIFY Level up in {{stat}}!\n" +
-                        "  HIGHLIGHT_OUTLINE\n" +
-                        "  INFOBOX 4151 YOU NEED ABYSSAL WHIP FOR THIS RUN\n" +
-                        "  SLEEP 500\n" +
-                        "  INFOBOX -502\n" +
-                        "  TEXT_OVER Grats {{player}}!\n" +
-                        "  OVERLAY_TEXT Low health! Eat food now!\n" +
-                        "\n" +
-                        "STOP command immediately clears active highlight/text sequences, overlay texts and infobox entries.\n"
-        );
-        p.add(new JScrollPane(infoArea), BorderLayout.CENTER);
+        p.setOpaque(false);
+
+        infoPane = new JEditorPane();
+        infoPane.setContentType("text/html");
+        infoPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        infoPane.setEditable(false);
+        infoPane.setOpaque(false);
+        infoPane.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        infoPane.setText(buildInfoHtml());
+
+        JPanel frame = new JPanel(new BorderLayout());
+        frame.setOpaque(true);
+        Color bg = new Color(32,32,38,245);
+        frame.setBackground(bg);
+        frame.setBorder(new CompoundBorder(new LineBorder(new Color(70,70,90)), new EmptyBorder(12,14,12,14)));
+        frame.add(infoPane, BorderLayout.CENTER);
+
+        JScrollPane sp = new JScrollPane(frame, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        sp.setBorder(new EmptyBorder(6,6,6,6));
+        sp.getViewport().setOpaque(false);
+        sp.setOpaque(false);
+        p.add(sp, BorderLayout.CENTER);
         return p;
     }
+
+    private String buildInfoHtml() {
+        StringBuilder skills = new StringBuilder();
+        for (Skill s : Skill.values()) {
+            if (skills.length()>0) skills.append(", ");
+            skills.append(s.name());
+        }
+        String skillTokens = skills.toString();
+        String css = "<style>body{font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#E4E6EB;line-height:1.42;margin:0;padding:0;}h1{font-size:18px;margin:0 0 8px 0;color:#ffffff;}h2{font-size:14px;margin:18px 0 6px 0;color:#ffffff;border-bottom:1px solid #444;padding-bottom:2px;}table{border-collapse:collapse;width:100%;}th,td{padding:3px 4px;font-size:11px;vertical-align:top;}tr:nth-child(odd){background:#292c33;}code,pre{background:#1e1f24;color:#C6D0E3;border:1px solid #3a3d44;padding:4px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:11px;}pre{overflow-x:auto;}ul{margin:4px 0 8px 18px;padding:0;}li{margin:2px 0;}.dim{color:#9aa0ac;font-size:11px;}</style>";
+        return "<html>"+css+"<body>" +
+                "<h1>KP Webhook – Info</h1>" +
+                "<h2>Triggers</h2><ul>" +
+                li("MANUAL","Manuelt kjør")+
+                li("STAT","Skill LEVEL_UP / ABOVE / BELOW")+
+                li("WIDGET","Widget group[:child] lastes")+
+                li("PLAYER_SPAWN / PLAYER_DESPAWN","Spiller inn / ut")+
+                li("NPC_SPAWN / NPC_DESPAWN","NPC inn / ut – filtrer via liste (id eller navn)")+
+                li("ANIMATION_SELF","Egen animasjon-ID")+
+                li("MESSAGE","Chat melding filter")+
+                li("VARBIT / VARPLAYER","Endres til verdi")+
+                li("TICK","Hvert tick, lette visuelle")+
+                "</ul><h2>Kommandoer</h2><table>"+ headRow("Kommando","Beskrivelse") +
+                row("NOTIFY <text>","Chat melding")+
+                row("WEBHOOK <text>","Webhook message")+
+                row("SCREENSHOT [text]","Sender screenshot")+
+                row("HIGHLIGHT_*","Outline/Tile/Hull/Minimap (<=0 persistent)")+
+                row("TEXT_OVER|CENTER|UNDER","Overhead tekst (<=0 persistent)")+
+                row("OVERLAY_TEXT <text>","HUD overlay boks")+
+                row("INFOBOX <id> [tt]","Infobox ikon(er)")+
+                row("SLEEP <ms>","Pause ms")+
+                row("TICK <n>","Delay n ticks")+
+                row("STOP","Stopper alt")+
+                "</table><div class='dim'>Tokens utvides før kjøring.</div>"+
+                "<h2>Tokens</h2><ul>"+
+                li("${player}","Spiller")+
+                li("${stat}","Skill navn")+
+                li("${current}/${value}","Boosted / terskel")+
+                li("${widgetGroup}/${widgetChild}","Widget IDs")+
+                li("${otherPlayer}/${otherCombat}","Annen spiller")+
+                li("${npcName}/${npcId}","Matchende NPC")+
+                li("${WORLD}","World")+
+                li("${STAT}/${CURRENT_STAT}","Real / boosted skill")+
+                li("${message}/${messageTypeId}","Chat data")+
+                li("Skill tokens","Real & CURRENT_ for: "+skillTokens)+
+                "</ul><div class='dim'>Varianter: ${NAME}, $NAME, {{NAME}}, legacy $SKILL.</div>"+
+                "<h2>Persistens <=0</h2><ul>"+
+                li("HIGHLIGHT_*","Upsert per rule")+
+                li("TEXT_*","Key per rule+pos")+
+                li("INFOBOX","Normal varighet")+
+                "</ul><h2>Eksempel</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE\nTEXT_OVER Goblin!\n</pre></body></html>";
+    }
+
+    private String headRow(String a, String b){ return "<tr style='background:#333'><th style='text-align:left'>"+a+"</th><th style='text-align:left'>"+b+"</th></tr>"; }
+    private String row(String a, String b){ return "<tr><td><code>"+escapeHtml(a)+"</code></td><td>"+escapeHtml(b)+"</td></tr>"; }
+    private String li(String head, String desc){ return "<li><b>"+escapeHtml(head)+"</b>: "+escapeHtml(desc)+"</li>"; }
+    private String escapeHtml(String s){ if (s==null) return ""; return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
 
     private JPanel buildButtons()
     {
@@ -495,6 +519,8 @@ public class KPWebhookPresetDialog extends JDialog
         {
             if (r.getMessageConfig().getMessageId() != null)
                 messageIdSpinner.setValue(r.getMessageConfig().getMessageId());
+            if (r.getMessageConfig().getMessageText() != null)
+                messageTextField.setText(r.getMessageConfig().getMessageText());
         }
         if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARBIT && r.getVarbitConfig() != null)
         {
@@ -505,6 +531,11 @@ public class KPWebhookPresetDialog extends JDialog
         {
             varplayerIdSpinner.setValue(r.getVarplayerConfig().getVarplayerId());
             varplayerValueSpinner.setValue(r.getVarplayerConfig().getValue());
+        }
+        if (r != null && (r.getTriggerType()== KPWebhookPreset.TriggerType.NPC_SPAWN || r.getTriggerType()== KPWebhookPreset.TriggerType.NPC_DESPAWN)) {
+            if (r.getNpcConfig()!=null) {
+                if (npcListField!=null) npcListField.setText(r.getNpcConfig().getRawList()!=null? r.getNpcConfig().getRawList():"");
+            }
         }
     }
 
@@ -528,6 +559,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.MessageConfig messageCfg = null;
         KPWebhookPreset.VarbitConfig varbitCfg = null;
         KPWebhookPreset.VarplayerConfig varplayerCfg = null;
+        KPWebhookPreset.NpcConfig npcCfg = null; // new
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -597,7 +629,9 @@ public class KPWebhookPresetDialog extends JDialog
             int messageId = 0;
             try { messageId = Integer.parseInt(messageIdSpinner.getValue().toString().trim()); }
             catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid message ID"); return; }
-            messageCfg = KPWebhookPreset.MessageConfig.builder().messageId(messageId).messageText(null).build();
+            String msgText = messageTextField.getText()!=null? messageTextField.getText().trim():"";
+            if (msgText.equals("*")) msgText = ""; // treat single * as no filter
+            messageCfg = KPWebhookPreset.MessageConfig.builder().messageId(messageId).messageText(msgText.isEmpty()?null:msgText).build();
         }
         else if (trig == KPWebhookPreset.TriggerType.VARBIT)
         {
@@ -614,6 +648,13 @@ public class KPWebhookPresetDialog extends JDialog
             catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid varplayer ID"); return; }
             int varplayerValue = (Integer) varplayerValueSpinner.getValue();
             varplayerCfg = KPWebhookPreset.VarplayerConfig.builder().varplayerId(varplayerId).value(varplayerValue).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.NPC_SPAWN || trig == KPWebhookPreset.TriggerType.NPC_DESPAWN) {
+            String raw = npcListField.getText().trim();
+            if (raw.isEmpty()) { JOptionPane.showMessageDialog(this, "NPC list cannot be empty"); return; }
+            npcCfg = parseNpcList(raw);
+            if ((npcCfg.getNpcIds()==null || npcCfg.getNpcIds().isEmpty()) && (npcCfg.getNpcNames()==null || npcCfg.getNpcNames().isEmpty())) {
+                JOptionPane.showMessageDialog(this, "NPC list invalid (no valid ids or names)"); return; }
         }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
@@ -684,6 +725,7 @@ public class KPWebhookPresetDialog extends JDialog
                 .overlayTextColor(overlayTextPanel.getColorHex())
                 .overlayTextSize(overlayTextPanel.getSizeValue())
                 .infoboxDuration(infoboxPanel.getDuration())
+                .npcConfig(npcCfg)
                 .playerConfig(playerCfg)
                 .animationConfig(animationCfg)
                 .messageConfig(messageCfg)
@@ -731,6 +773,16 @@ public class KPWebhookPresetDialog extends JDialog
         JOptionPane.showMessageDialog(this, msg, "Help", JOptionPane.INFORMATION_MESSAGE);
     }
 
+    private void updateHeader(){
+        String name = titleField!=null? titleField.getText().trim():"";
+        if (name.isEmpty()) {
+            // For new or untitled, keep a neutral window title
+            setTitle("Preset");
+        } else {
+            setTitle(name);
+        }
+    }
+
     /* ================= SUPPORT CLASSES ================= */
     private abstract static class SimpleDoc implements DocumentListener
     { protected abstract void changed(); @Override public void insertUpdate(DocumentEvent e){ changed(); } @Override public void removeUpdate(DocumentEvent e){ changed(); } @Override public void changedUpdate(DocumentEvent e){ changed(); } }
@@ -757,7 +809,7 @@ public class KPWebhookPresetDialog extends JDialog
             int y=0;
             JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             c.gridx=0; c.gridy=y; c.weightx=0; add(durLbl, c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,5000,1));
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,5000,1));
             Dimension sd = durationSpinner.getPreferredSize();
             durationSpinner.setPreferredSize(new Dimension(60, sd.height));
             JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
@@ -817,7 +869,7 @@ public class KPWebhookPresetDialog extends JDialog
             int y=0;
             JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             c.gridx=0; c.gridy=y; add(durLbl, c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,5000,1));
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,5000,1));
             Dimension ds = durationSpinner.getPreferredSize();
             durationSpinner.setPreferredSize(new Dimension(60, ds.height));
             JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
@@ -1153,10 +1205,14 @@ public class KPWebhookPresetDialog extends JDialog
         m.weightx = 1;
         int my=0;
         m.gridx=0; m.gridy=my; m.weightx=0; messageCard.add(new JLabel("Message ID"), m);
-        messageIdSpinner = new JSpinner(new SpinnerNumberModel(0,0,9999,1));
+        messageIdSpinner = new JSpinner(new SpinnerNumberModel(0,-1,9999,1)); // allow -1 = ANY type
         Dimension mid = messageIdSpinner.getPreferredSize();
         messageIdSpinner.setPreferredSize(new Dimension(80, mid.height));
         m.gridx=1; m.weightx=1; messageCard.add(messageIdSpinner, m); my++;
+        m.gridx=0; m.gridy=my; m.weightx=0; messageCard.add(new JLabel("Message text"), m);
+        messageTextField = new JTextField();
+        messageTextField.setToolTipText("Optional text to match. Use * for wildcards, e.g. *HELLO*  ; '_' = space. ID -1 = ANY chat type.");
+        m.gridx=1; m.weightx=1; messageCard.add(messageTextField, m); my++;
         // VARBIT card
         varbitCard = new JPanel(new GridBagLayout());
         GridBagConstraints vb = new GridBagConstraints();
@@ -1189,8 +1245,19 @@ public class KPWebhookPresetDialog extends JDialog
         vp.gridx=0; vp.gridy=vpy; vp.weightx=0; varplayerCard.add(new JLabel("Value"), vp);
         varplayerValueSpinner = new JSpinner(new SpinnerNumberModel(0,0,255,1));
         vp.gridx=1; vp.weightx=1; varplayerCard.add(varplayerValueSpinner, vp); vpy++;
-        // removed message text field (was messageTextField) so layout ends here
-        // Add cards
+        // NPC card
+        npcCard = new JPanel(new GridBagLayout());
+        GridBagConstraints nc = new GridBagConstraints();
+        nc.insets = new Insets(4,4,4,4);
+        nc.fill = GridBagConstraints.HORIZONTAL;
+        nc.anchor = GridBagConstraints.WEST;
+        nc.weightx = 1;
+        int ncy=0;
+        nc.gridx=0; nc.gridy=ncy; nc.weightx=0; npcCard.add(new JLabel("NPC liste"), nc);
+        npcListField = new JTextField();
+        npcListField.setToolTipText("Kommaseparert liste: id eller navn. Navn: bruk underscore i stedet for mellomrom. Eksempel: 122,goblin,stray_dog");
+        nc.gridx=1; nc.weightx=1; npcCard.add(npcListField, nc); ncy++;
+        // Add all cards (we add placeholders to avoid breaking existing order)
         cards.add(new JPanel(), "NONE");
         cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
         cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET.name());
@@ -1199,6 +1266,7 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
         cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
+        cards.add(npcCard, "NPC");
         return cards;
     }
 
@@ -1213,6 +1281,10 @@ public class KPWebhookPresetDialog extends JDialog
         else if (KPWebhookPreset.TriggerType.PLAYER_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.PLAYER_DESPAWN.name().equals(sel))
         {
             cl.show(triggerCards, "PLAYER");
+        }
+        else if (KPWebhookPreset.TriggerType.NPC_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.NPC_DESPAWN.name().equals(sel))
+        {
+            cl.show(triggerCards, "NPC");
         }
         else
         {
@@ -1277,7 +1349,7 @@ public class KPWebhookPresetDialog extends JDialog
             c.anchor = GridBagConstraints.WEST; c.weightx=1; int y=0;
             JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             c.gridx=0; c.gridy=y; add(durLbl,c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,10000,1));
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1));
             Dimension ds = durationSpinner.getPreferredSize();
             durationSpinner.setPreferredSize(new Dimension(70, ds.height));
             JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
@@ -1308,7 +1380,7 @@ public class KPWebhookPresetDialog extends JDialog
             c.weightx = 1; int y=0;
             JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
             c.gridx=0; c.gridy=y; add(durLbl,c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,1,10000,1));
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1));
             JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("ticks"));
             c.gridx=1; add(durRow,c); y++;
             JLabel sizeLbl = new JLabel("Size"); sizeLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
@@ -1331,5 +1403,26 @@ public class KPWebhookPresetDialog extends JDialog
         int getDuration(){ return (Integer)durationSpinner.getValue(); }
         int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
         String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+    }
+
+    private KPWebhookPreset.NpcConfig parseNpcList(String raw) {
+        KPWebhookPreset.NpcConfig.NpcConfigBuilder b = KPWebhookPreset.NpcConfig.builder();
+        b.rawList(raw);
+        java.util.List<Integer> ids = new java.util.ArrayList<>();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (String part : raw.split(",")) {
+            String t = part.trim();
+            if (t.isEmpty()) continue;
+            // accept underscore as provided; normalize spaces to underscore
+            String norm = t.replace(' ', '_').toLowerCase(Locale.ROOT);
+            if (norm.matches("\\d+")) {
+                try { ids.add(Integer.parseInt(norm)); } catch (NumberFormatException ignored) {}
+            } else {
+                names.add(norm);
+            }
+        }
+        if (!ids.isEmpty()) b.npcIds(ids);
+        if (!names.isEmpty()) b.npcNames(names);
+        return b.build();
     }
 }

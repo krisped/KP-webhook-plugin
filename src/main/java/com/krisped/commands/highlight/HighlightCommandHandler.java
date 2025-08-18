@@ -22,35 +22,59 @@ public class HighlightCommandHandler {
 
     public boolean handle(String lineUpper, KPWebhookPreset rule) {
         if (P_OUTLINE.matcher(lineUpper).find()) {
-            highlightManager.addHighlight(HighlightType.OUTLINE,
-                    safe(rule.getHlOutlineDuration(),5),
-                    safe(rule.getHlOutlineWidth(),2),
-                    rule.getHlOutlineColor(),
-                    bool(rule.getHlOutlineBlink()));
+            int dur = safe(rule.getHlOutlineDuration(),5);
+            if (dur <= 0) {
+                highlightManager.upsertHighlight(rule.getId(), HighlightType.OUTLINE,
+                        safe(rule.getHlOutlineWidth(),2), rule.getHlOutlineColor(), bool(rule.getHlOutlineBlink()));
+            } else {
+                highlightManager.addHighlight(HighlightType.OUTLINE,
+                        dur,
+                        safe(rule.getHlOutlineWidth(),2),
+                        rule.getHlOutlineColor(),
+                        bool(rule.getHlOutlineBlink()));
+            }
             return true;
         }
         if (P_TILE.matcher(lineUpper).find()) {
-            highlightManager.addHighlight(HighlightType.TILE,
-                    safe(rule.getHlTileDuration(),5),
-                    safe(rule.getHlTileWidth(),2),
-                    rule.getHlTileColor(),
-                    bool(rule.getHlTileBlink()));
+            int dur = safe(rule.getHlTileDuration(),5);
+            if (dur <= 0) {
+                highlightManager.upsertHighlight(rule.getId(), HighlightType.TILE,
+                        safe(rule.getHlTileWidth(),2), rule.getHlTileColor(), bool(rule.getHlTileBlink()));
+            } else {
+                highlightManager.addHighlight(HighlightType.TILE,
+                        dur,
+                        safe(rule.getHlTileWidth(),2),
+                        rule.getHlTileColor(),
+                        bool(rule.getHlTileBlink()));
+            }
             return true;
         }
         if (P_HULL.matcher(lineUpper).find()) {
-            highlightManager.addHighlight(HighlightType.HULL,
-                    safe(rule.getHlHullDuration(),5),
-                    safe(rule.getHlHullWidth(),2),
-                    rule.getHlHullColor(),
-                    bool(rule.getHlHullBlink()));
+            int dur = safe(rule.getHlHullDuration(),5);
+            if (dur <= 0) {
+                highlightManager.upsertHighlight(rule.getId(), HighlightType.HULL,
+                        safe(rule.getHlHullWidth(),2), rule.getHlHullColor(), bool(rule.getHlHullBlink()));
+            } else {
+                highlightManager.addHighlight(HighlightType.HULL,
+                        dur,
+                        safe(rule.getHlHullWidth(),2),
+                        rule.getHlHullColor(),
+                        bool(rule.getHlHullBlink()));
+            }
             return true;
         }
         if (P_MINIMAP.matcher(lineUpper).find()) {
-            highlightManager.addHighlight(HighlightType.MINIMAP,
-                    safe(rule.getHlMinimapDuration(),5),
-                    safe(rule.getHlMinimapWidth(),2),
-                    rule.getHlMinimapColor(),
-                    bool(rule.getHlMinimapBlink()));
+            int dur = safe(rule.getHlMinimapDuration(),5);
+            if (dur <= 0) {
+                highlightManager.upsertHighlight(rule.getId(), HighlightType.MINIMAP,
+                        safe(rule.getHlMinimapWidth(),2), rule.getHlMinimapColor(), bool(rule.getHlMinimapBlink()));
+            } else {
+                highlightManager.addHighlight(HighlightType.MINIMAP,
+                        dur,
+                        safe(rule.getHlMinimapWidth(),2),
+                        rule.getHlMinimapColor(),
+                        bool(rule.getHlMinimapBlink()));
+            }
             return true;
         }
         return false;

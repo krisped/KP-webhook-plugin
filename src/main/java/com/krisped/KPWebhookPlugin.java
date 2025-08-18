@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.events.*;
+import net.runelite.client.util.Text;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -44,8 +45,8 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, ANIMATION_SELF, MESSAGE, VARBIT, VARPLAYER, TICK. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
-        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","varbit","varplayer","tick","overlay"}
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, MESSAGE, VARBIT, VARPLAYER, TICK. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay"}
 )
 public class KPWebhookPlugin extends Plugin
 {
@@ -73,6 +74,7 @@ public class KPWebhookPlugin extends Plugin
 
     private final List<KPWebhookPreset> rules = new ArrayList<>();
     private int nextId = 0;
+    private KPWebhookDebugWindow debugWindow; // debug chat/message window
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
     private static final MediaType PNG  = MediaType.parse("image/png");
@@ -99,6 +101,8 @@ public class KPWebhookPlugin extends Plugin
         boolean italic;
         boolean underline;
         String key; // optional unique key for persistent (TICK) texts
+        boolean persistent; // new: if true, do not decrement/remove automatically
+        int ruleId = -1; // new: owning rule id for cleanup
     }
     private final java.util.List<ActiveOverheadText> overheadTexts = new ArrayList<>();
     private final Map<Integer,Integer> lastVarpValues = new HashMap<>(); // cache for VARPLAYER polling
@@ -177,6 +181,7 @@ public class KPWebhookPlugin extends Plugin
         overheadTexts.clear();
         if (infoboxCommandHandler != null) infoboxCommandHandler.clearAll(); // clear native infoboxes (if any used earlier)
         if (overlayTextManager != null) overlayTextManager.clear();
+        if (debugWindow != null) { try { debugWindow.dispose(); } catch (Exception ignored) {} debugWindow = null; }
     }
 
     public String getDefaultWebhook()
@@ -264,25 +269,24 @@ public class KPWebhookPlugin extends Plugin
             while (it.hasNext())
             {
                 ActiveOverheadText t = it.next();
-                // Blink: toggle visibility every game tick for consistent flashing
                 if (t.blink)
                 {
                     t.visiblePhase = !t.visiblePhase;
                 }
                 else
                 {
-                    t.visiblePhase = true; // ensure visible if not blinking
+                    t.visiblePhase = true;
                 }
-                // Duration countdown after visibility decision to keep phases even
-                t.remainingTicks--;
-                if (t.remainingTicks <= 0)
+                if (!t.persistent) // only countdown non-persistent
                 {
-                    it.remove();
+                    t.remainingTicks--;
+                    if (t.remainingTicks <= 0)
+                    {
+                        it.remove();
+                    }
                 }
             }
         }
-
-        handleThreshold(Skill.HITPOINTS, client.getBoostedSkillLevel(Skill.HITPOINTS));
 
         // Schedule capture of current frame on EDT (after game state updated this tick)
         try {
@@ -320,6 +324,9 @@ public class KPWebhookPlugin extends Plugin
         Skill skill = ev.getSkill();
         int real = ev.getLevel();
         Integer prev = lastRealLevel.get(skill);
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logStat(skill.name(), real, ev.getBoostedLevel()); } catch (Exception ignored) {}
+        }
         if (prev==null || real>prev)
         {
             lastRealLevel.put(skill, real);
@@ -330,12 +337,19 @@ public class KPWebhookPlugin extends Plugin
             lastRealLevel.put(skill, real);
         }
         handleThreshold(skill, ev.getBoostedLevel());
+        // If threshold already satisfied and stat changed while still inside condition, refresh persistent visuals
+        if (ev.getSkill() != null) {
+            refreshPersistentStatVisuals(ev.getSkill(), ev.getBoostedLevel());
+        }
     }
 
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded ev)
     {
         int group = ev.getGroupId();
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logWidget(group, null); } catch (Exception ignored) {}
+        }
         for (KPWebhookPreset r : getRules())
         {
             if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.WIDGET) continue;
@@ -354,6 +368,9 @@ public class KPWebhookPlugin extends Plugin
     public void onPlayerSpawned(PlayerSpawned ev)
     {
         Player p = ev.getPlayer(); if (p==null) return;
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logPlayerSpawn(false, sanitizePlayerName(p.getName()), p.getCombatLevel()); } catch (Exception ignored) {}
+        }
         for (KPWebhookPreset r : getRules())
         {
             if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.PLAYER_SPAWN) continue;
@@ -366,6 +383,9 @@ public class KPWebhookPlugin extends Plugin
     public void onPlayerDespawned(PlayerDespawned ev)
     {
         Player p = ev.getPlayer(); if (p==null) return;
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logPlayerSpawn(true, sanitizePlayerName(p.getName()), p.getCombatLevel()); } catch (Exception ignored) {}
+        }
         for (KPWebhookPreset r : getRules())
         {
             if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.PLAYER_DESPAWN) continue;
@@ -375,10 +395,38 @@ public class KPWebhookPlugin extends Plugin
     }
 
     @Subscribe
+    public void onNpcSpawned(NpcSpawned ev) {
+        NPC npc = ev.getNpc(); if (npc==null) return;
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logNpcSpawn(false, sanitizeNpcName(npc.getName()), npc.getId(), npc.getCombatLevel()); } catch (Exception ignored) {}
+        }
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.NPC_SPAWN) continue;
+            KPWebhookPreset.NpcConfig cfg = r.getNpcConfig(); if (!matchesNpc(cfg, npc)) continue;
+            executeRule(r, null, -1, null, null, null, npc);
+        }
+    }
+    @Subscribe
+    public void onNpcDespawned(NpcDespawned ev) {
+        NPC npc = ev.getNpc(); if (npc==null) return;
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logNpcSpawn(true, sanitizeNpcName(npc.getName()), npc.getId(), npc.getCombatLevel()); } catch (Exception ignored) {}
+        }
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.NPC_DESPAWN) continue;
+            KPWebhookPreset.NpcConfig cfg = r.getNpcConfig(); if (!matchesNpc(cfg, npc)) continue;
+            executeRule(r, null, -1, null, null, null, npc);
+        }
+    }
+
+    @Subscribe
     public void onVarbitChanged(VarbitChanged ev)
     {
         int varbitId = ev.getVarbitId();
         int newValue = ev.getValue();
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logVarbit(varbitId, newValue); } catch (Exception ignored) {}
+        }
         for (KPWebhookPreset r : getRules())
         {
             if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.VARBIT) continue;
@@ -391,16 +439,54 @@ public class KPWebhookPlugin extends Plugin
         }
     }
 
+    @Subscribe
+    public void onChatMessage(ChatMessage ev)
+    {
+        ChatMessageType type = ev.getType();
+        String raw = ev.getMessage();
+        String plain = raw;
+        try { plain = Text.removeTags(raw); } catch (Exception ignored) {}
+        if (plain == null) plain = "";
+        int typeId = type.ordinal();
+        String plainNormalized = plain.replace('\u00A0',' ').trim();
+        String sender = sanitizePlayerName(ev.getName());
+        if (debugWindow != null && debugWindow.isVisible()) {
+            debugWindow.addMessage(type, typeId, sender, plainNormalized, raw);
+        }
+        for (KPWebhookPreset r : getRules())
+        {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.MESSAGE) continue;
+            KPWebhookPreset.MessageConfig cfg = r.getMessageConfig();
+            if (cfg == null || cfg.getMessageId() == null) continue;
+            int wantedId = cfg.getMessageId();
+            if (wantedId != -1 && wantedId != typeId) continue; // -1 = ANY type
+            if (cfg.getMessageText() != null && !cfg.getMessageText().isBlank())
+            {
+                if (!wildcardMatch(plainNormalized, cfg.getMessageText())) continue;
+            }
+            executeMessageRule(r, plainNormalized, typeId);
+        }
+    }
+
+    // ===== Restored helper methods for STAT / PLAYER triggers and execution =====
     private boolean matchesPlayer(KPWebhookPreset.PlayerConfig cfg, Player p)
     {
+        if (cfg == null || p == null) return false;
         if (cfg.isAll()) return true;
         if (cfg.getName()!=null && !cfg.getName().isBlank())
         {
-            String a = cfg.getName().trim(); String b = p.getName()!=null?p.getName().trim():""; if (b.equalsIgnoreCase(a)) return true;
+            String target = sanitizePlayerName(cfg.getName()).trim();
+            String actual = sanitizePlayerName(p.getName()).trim();
+            if (actual.equalsIgnoreCase(target)) return true;
         }
         if (cfg.getCombatRange()!=null)
         {
-            Player local = client.getLocalPlayer(); if (local==null) return false; int range = Math.max(0, cfg.getCombatRange()); int base = local.getCombatLevel(); int cl = p.getCombatLevel(); return cl >= base-range && cl <= base+range;
+            Player local = client.getLocalPlayer();
+            if (local == null) return false;
+            int range = Math.max(0, cfg.getCombatRange());
+            int base = local.getCombatLevel();
+            int cl = p.getCombatLevel();
+            return cl >= base - range && cl <= base + range;
         }
         return false;
     }
@@ -412,63 +498,228 @@ public class KPWebhookPlugin extends Plugin
             if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.STAT) continue;
             KPWebhookPreset.StatConfig cfg = r.getStatConfig();
             if (cfg==null || cfg.getSkill()!=skill || cfg.getMode()!= KPWebhookPreset.StatMode.LEVEL_UP) continue;
-            if (r.getLastSeenRealLevel() >=0 && newReal > r.getLastSeenRealLevel()) executeRule(r, skill, newReal, cfg, null);
-            r.setLastSeenRealLevel(newReal); savePreset(r);
+            if (r.getLastSeenRealLevel() >=0 && newReal > r.getLastSeenRealLevel())
+            {
+                executeRule(r, skill, newReal, cfg, null);
+            }
+            r.setLastSeenRealLevel(newReal);
+            savePreset(r);
         }
     }
+
     private void handleThreshold(Skill skill, int boostedValue)
     {
         for (KPWebhookPreset r : getRules())
         {
             if (!r.isActive() || r.getTriggerType()!= KPWebhookPreset.TriggerType.STAT) continue;
             KPWebhookPreset.StatConfig cfg = r.getStatConfig();
-            if (cfg==null || cfg.getSkill()!=skill || cfg.getMode()== KPWebhookPreset.StatMode.LEVEL_UP) continue;
+            if (cfg==null || cfg.getSkill()!=skill) continue;
+            if (cfg.getMode()== KPWebhookPreset.StatMode.LEVEL_UP) continue; // handled separately
             boolean condition = cfg.getMode()== KPWebhookPreset.StatMode.ABOVE ? boostedValue > cfg.getThreshold() : boostedValue < cfg.getThreshold();
-            if (condition && !r.isLastConditionMet()) { executeRule(r, skill, boostedValue, cfg, null); r.setLastConditionMet(true); savePreset(r);} else if (!condition && r.isLastConditionMet()){ r.setLastConditionMet(false); savePreset(r);} }
+            if (condition && !r.isLastConditionMet())
+            {
+                // First enter: fire
+                removeOverheadsForRule(r.getId(), true); // clear any previous visuals for fresh start
+                executeRule(r, skill, boostedValue, cfg, null);
+                r.setLastConditionMet(true);
+                r.setLastTriggeredBoosted(boostedValue);
+                savePreset(r);
+            }
+            else if (condition && r.isLastConditionMet())
+            {
+                // Already inside condition window; re-trigger if boosted value changed
+                if (boostedValue != r.getLastTriggeredBoosted())
+                {
+                    removeOverheadsForRule(r.getId(), true);
+                    executeRule(r, skill, boostedValue, cfg, null);
+                    r.setLastTriggeredBoosted(boostedValue);
+                    savePreset(r);
+                }
+            }
+            else if (!condition && r.isLastConditionMet())
+            {
+                r.setLastConditionMet(false);
+                r.setLastTriggeredBoosted(Integer.MIN_VALUE);
+                removePersistentOverheadsForRule(r.getId());
+                try { highlightManager.removePersistentByRule(r.getId()); } catch (Exception ignored) {}
+                removeOverheadsForRule(r.getId(), true); // also clear any lingering ephemeral texts
+                savePreset(r);
+            }
+        }
     }
 
     public void manualSend(int id)
-    { KPWebhookPreset r = find(id); if (r!=null) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig()); }
+    {
+        KPWebhookPreset r = find(id);
+        if (r!=null)
+        {
+            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+        }
+    }
 
-    /* ================= Webhook resolution ================= */
     private String resolveWebhook(KPWebhookPreset rule)
     {
-        if (rule.isUseDefaultWebhook()) { String def = getDefaultWebhook(); if (!def.isBlank()) return def; }
+        if (rule == null) return null;
+        if (rule.isUseDefaultWebhook())
+        {
+            String def = getDefaultWebhook();
+            if (!def.isBlank()) return def;
+        }
         if (rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank()) return rule.getWebhookUrl().trim();
         return null;
     }
-    private boolean webhookAvailable(KPWebhookPreset rule){ return resolveWebhook(rule) != null; }
+    private boolean webhookAvailable(KPWebhookPreset rule) { return resolveWebhook(rule) != null; }
 
-    /* ================= Execution ================= */
     private void executeRule(KPWebhookPreset rule, Skill stat, int current, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg)
-    { executeRule(rule, stat, current, statCfg, widgetCfg, null); }
-
+    { executeRule(rule, stat, current, statCfg, widgetCfg, null, null); }
     private void executeRule(KPWebhookPreset rule, Skill stat, int current, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg, Player otherPlayer)
+    { executeRule(rule, stat, current, statCfg, widgetCfg, otherPlayer, null); }
+    private void executeRule(KPWebhookPreset rule, Skill stat, int current, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg, Player otherPlayer, NPC otherNpc)
+    {
+        if (rule == null) return;
+        if (rule.getTriggerType()== KPWebhookPreset.TriggerType.STAT) {
+            removeOverheadsForRule(rule.getId(), false);
+        }
+        String cmds = rule.getCommands();
+        if (cmds == null || cmds.isBlank()) return;
+        Map<String,String> ctx = new HashMap<>();
+        ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
+        ctx.put("stat", stat!=null?stat.name():(statCfg!=null && statCfg.getSkill()!=null? statCfg.getSkill().name():""));
+        ctx.put("current", current>=0? String.valueOf(current):"");
+        ctx.put("value", statCfg!=null? String.valueOf(statCfg.getThreshold()):"");
+        ctx.put("widgetGroup", widgetCfg!=null? String.valueOf(widgetCfg.getGroupId()):"");
+        ctx.put("widgetChild", widgetCfg!=null && widgetCfg.getChildId()!=null? String.valueOf(widgetCfg.getChildId()):"");
+        ctx.put("time", Instant.now().toString());
+        ctx.put("otherPlayer", otherPlayer!=null? sanitizePlayerName(otherPlayer.getName()):"");
+        ctx.put("otherCombat", otherPlayer!=null? String.valueOf(otherPlayer.getCombatLevel()):"");
+        if (otherNpc != null) {
+            String npcName = sanitizeNpcName(otherNpc.getName());
+            ctx.put("npcName", npcName);
+            ctx.put("npcId", String.valueOf(otherNpc.getId()));
+        } else {
+            ctx.put("npcName", "");
+            ctx.put("npcId", "");
+        }
+        try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
+        Skill skillCtx = stat!=null? stat : (statCfg!=null? statCfg.getSkill(): null);
+        if (skillCtx != null) {
+            try { ctx.put("STAT", String.valueOf(client.getRealSkillLevel(skillCtx))); } catch (Exception ignored) { ctx.put("STAT"," "); }
+            try { ctx.put("CURRENT_STAT", String.valueOf(client.getBoostedSkillLevel(skillCtx))); } catch (Exception ignored) { ctx.put("CURRENT_STAT"," "); }
+        } else { ctx.put("STAT", ""); ctx.put("CURRENT_STAT", ""); }
+        for (Skill s : Skill.values()) {
+            try {
+                int real = client.getRealSkillLevel(s);
+                int boosted = client.getBoostedSkillLevel(s);
+                ctx.put("$"+s.name(), String.valueOf(real));
+                ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
+                ctx.put(s.name(), String.valueOf(real));
+                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted));
+            } catch (Exception ignored) {}
+        }
+        // sequence preparation identical
+        List<PendingCommand> list = new ArrayList<>();
+        for (String rawLine : cmds.split("\r?\n")) {
+            String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
+            String upper = line.toUpperCase(Locale.ROOT);
+            if (upper.startsWith("SLEEP ")) { long ms=0; try { ms = Long.parseLong(line.substring(6).trim()); } catch (Exception ignored) {} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) {}
+            else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try { ticks=Integer.parseInt(parts[1]); } catch (Exception ignored) {} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
+        if (list.isEmpty()) return;
+        CommandSequence seq = new CommandSequence();
+        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0L;
+        activeSequences.add(seq);
+    }
+
+    private boolean wildcardMatch(String text, String pattern)
+    {
+        if (pattern == null || pattern.isEmpty()) return true; // no filter
+        if (text == null) return false;
+        String p = pattern.trim();
+        if (p.equals("*")) return true; // match all
+        // user uses _ for space
+        p = p.replace('_', ' ');
+        String src = text;
+        // case-insensitive compare using lowercase
+        String pLower = p.toLowerCase(Locale.ROOT);
+        String srcLower = src.toLowerCase(Locale.ROOT);
+        // No wildcard => substring search
+        if (!pLower.contains("*")) {
+            return srcLower.contains(pLower);
+        }
+        // Split on * and ensure order
+        String[] parts = pLower.split("\\*", -1); // keep empties for leading/trailing *
+        int index = 0;
+        boolean firstPart = true;
+        for (int i = 0; i < parts.length; i++)
+        {
+            String part = parts[i];
+            if (part.isEmpty()) {
+                // Consecutive * or leading/trailing * -> skip
+                continue;
+            }
+            int found = srcLower.indexOf(part, index);
+            if (found == -1) return false;
+            // If this is the first non-empty part and pattern doesn't start with * it must be at start
+            if (firstPart && !pLower.startsWith("*") && found != 0) return false;
+            index = found + part.length();
+            firstPart = false;
+        }
+        // If pattern does not end with * then last non-empty part must align with end of string
+        if (!pLower.endsWith("*"))
+        {
+            // find last non-empty part
+            for (int i = parts.length - 1; i >= 0; i--)
+            {
+                if (!parts[i].isEmpty())
+                {
+                    return srcLower.endsWith(parts[i]);
+                }
+            }
+        }
+        return true;
+    }
+
+    private void executeMessageRule(KPWebhookPreset rule, String messageText, int messageTypeId)
     {
         String cmds = rule.getCommands(); if (cmds==null || cmds.isEmpty()) return;
         Map<String,String> ctx = new HashMap<>();
         ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
-        ctx.put("stat", stat!=null?stat.name():(statCfg!=null && statCfg.getSkill()!=null?statCfg.getSkill().name():""));
-        ctx.put("current", current>=0?String.valueOf(current):"");
-        ctx.put("value", statCfg!=null?String.valueOf(statCfg.getThreshold()):"");
-        ctx.put("widgetGroup", widgetCfg!=null?String.valueOf(widgetCfg.getGroupId()):"");
-        ctx.put("widgetChild", widgetCfg!=null && widgetCfg.getChildId()!=null?String.valueOf(widgetCfg.getChildId()):"");
+        ctx.put("stat", "");
+        ctx.put("current", "");
+        ctx.put("value", "");
+        ctx.put("widgetGroup", "");
+        ctx.put("widgetChild", "");
         ctx.put("time", Instant.now().toString());
-        ctx.put("otherPlayer", otherPlayer!=null?otherPlayer.getName():"");
-        ctx.put("otherCombat", otherPlayer!=null?String.valueOf(otherPlayer.getCombatLevel()):"");
-        // Add skill tokens: $CURRENT_<SKILL>, $<SKILL>
+        ctx.put("otherPlayer", "");
+        ctx.put("otherCombat", "");
+        ctx.put("message", messageText); // new token
+        ctx.put("messageTypeId", String.valueOf(messageTypeId));
+        // World token also for message-based rules
+        try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
+        // No specific stat context here
+        ctx.put("STAT", "");
+        ctx.put("CURRENT_STAT", "");
+        // Add skill tokens (both legacy and new forms)
         for (Skill s : Skill.values())
         {
-            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s); ctx.put("$" + s.name(), String.valueOf(real)); ctx.put("$CURRENT_" + s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
+            try {
+                int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
+                ctx.put("$" + s.name(), String.valueOf(real));
+                ctx.put("$CURRENT_" + s.name(), String.valueOf(boosted));
+                ctx.put(s.name(), String.valueOf(real));
+                ctx.put("CURRENT_" + s.name(), String.valueOf(boosted));
+            } catch (Exception ignored) {}
         }
         List<PendingCommand> list = new ArrayList<>();
-        for (String raw : cmds.split("\r?\n"))
+        for (String rawLine : cmds.split("\r?\n"))
         {
-            String line = raw.trim(); if (line.isEmpty() || line.startsWith("#")) continue; String upper = line.toUpperCase(Locale.ROOT);
-            if (upper.startsWith("SLEEP ")){ long ms=0; try{ ms = Long.parseLong(line.substring(6).trim()); }catch(Exception ignored){} PendingCommand pc = new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) { /* no-op */ }
+            String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
+            String upper = line.toUpperCase(Locale.ROOT);
+            if (upper.startsWith("SLEEP ")) { long ms=0; try{ ms=Long.parseLong(line.substring(6).trim()); }catch(Exception ignored){} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) { /* ignore */ }
             else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try{ ticks=Integer.parseInt(parts[1]); }catch(Exception ignored){} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
         if (list.isEmpty()) return;
-        CommandSequence seq = new CommandSequence(); seq.rule=rule; seq.ctx=ctx; seq.commands=list; seq.index=0; seq.tickDelayRemaining=0; seq.sleepUntilMillis=0; activeSequences.add(seq);
+        CommandSequence seq = new CommandSequence();
+        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0;
+        activeSequences.add(seq);
     }
 
     private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx)
@@ -509,8 +760,6 @@ public class KPWebhookPlugin extends Plugin
     private void addOverheadTextFromPreset(String text, String position, KPWebhookPreset rule)
     {
         if (text == null || text.isBlank()) return;
-
-        // Get settings from preset based on position
         Color color = Color.YELLOW;
         boolean blink = false;
         int size = 16;
@@ -518,77 +767,68 @@ public class KPWebhookPlugin extends Plugin
         boolean bold = false;
         boolean italic = false;
         boolean underline = false;
-
         if ("Under".equals(position)) {
-            if (rule.getTextUnderColor() != null) {
-                color = parseColor(rule.getTextUnderColor().replace("#", ""), color);
-            }
-            if (rule.getTextUnderBlink() != null) {
-                blink = rule.getTextUnderBlink();
-            }
-            if (rule.getTextUnderSize() != null) {
-                size = rule.getTextUnderSize();
-            }
-            if (rule.getTextUnderDuration() != null) {
-                duration = rule.getTextUnderDuration();
-            }
-            if (rule.getTextUnderBold() != null) {
-                bold = rule.getTextUnderBold();
-            }
-            if (rule.getTextUnderItalic() != null) {
-                italic = rule.getTextUnderItalic();
-            }
-            if (rule.getTextUnderUnderline() != null) {
-                underline = rule.getTextUnderUnderline();
-            }
+            if (rule.getTextUnderColor() != null) { color = parseColor(rule.getTextUnderColor().replace("#", ""), color); }
+            if (rule.getTextUnderBlink() != null) { blink = rule.getTextUnderBlink(); }
+            if (rule.getTextUnderSize() != null) { size = rule.getTextUnderSize(); }
+            if (rule.getTextUnderDuration() != null) { duration = rule.getTextUnderDuration(); }
+            if (rule.getTextUnderBold() != null) { bold = rule.getTextUnderBold(); }
+            if (rule.getTextUnderItalic() != null) { italic = rule.getTextUnderItalic(); }
+            if (rule.getTextUnderUnderline() != null) { underline = rule.getTextUnderUnderline(); }
         } else if ("Above".equals(position)) {
-            // Fix: Use textOver properties, not textAbove
-            if (rule.getTextOverColor() != null) {
-                color = parseColor(rule.getTextOverColor().replace("#", ""), color);
-            }
-            if (rule.getTextOverBlink() != null) {
-                blink = rule.getTextOverBlink();
-            }
-            if (rule.getTextOverSize() != null) {
-                size = rule.getTextOverSize();
-            }
-            if (rule.getTextOverDuration() != null) {
-                duration = rule.getTextOverDuration();
-            }
-            if (rule.getTextOverBold() != null) {
-                bold = rule.getTextOverBold();
-            }
-            if (rule.getTextOverItalic() != null) {
-                italic = rule.getTextOverItalic();
-            }
-            if (rule.getTextOverUnderline() != null) {
-                underline = rule.getTextOverUnderline();
-            }
+            if (rule.getTextOverColor() != null) { color = parseColor(rule.getTextOverColor().replace("#", ""), color); }
+            if (rule.getTextOverBlink() != null) { blink = rule.getTextOverBlink(); }
+            if (rule.getTextOverSize() != null) { size = rule.getTextOverSize(); }
+            if (rule.getTextOverDuration() != null) { duration = rule.getTextOverDuration(); }
+            if (rule.getTextOverBold() != null) { bold = rule.getTextOverBold(); }
+            if (rule.getTextOverItalic() != null) { italic = rule.getTextOverItalic(); }
+            if (rule.getTextOverUnderline() != null) { underline = rule.getTextOverUnderline(); }
         } else if ("Center".equals(position)) {
-            if (rule.getTextCenterColor() != null) {
-                color = parseColor(rule.getTextCenterColor().replace("#", ""), color);
-            }
-            if (rule.getTextCenterBlink() != null) {
-                blink = rule.getTextCenterBlink();
-            }
-            if (rule.getTextCenterSize() != null) {
-                size = rule.getTextCenterSize();
-            }
-            if (rule.getTextCenterDuration() != null) {
-                duration = rule.getTextCenterDuration();
-            }
-            if (rule.getTextCenterBold() != null) {
-                bold = rule.getTextCenterBold();
-            }
-            if (rule.getTextCenterItalic() != null) {
-                italic = rule.getTextCenterItalic();
-            }
-            if (rule.getTextCenterUnderline() != null) {
-                underline = rule.getTextCenterUnderline();
-            }
+            if (rule.getTextCenterColor() != null) { color = parseColor(rule.getTextCenterColor().replace("#", ""), color); }
+            if (rule.getTextCenterBlink() != null) { blink = rule.getTextCenterBlink(); }
+            if (rule.getTextCenterSize() != null) { size = rule.getTextCenterSize(); }
+            if (rule.getTextCenterDuration() != null) { duration = rule.getTextCenterDuration(); }
+            if (rule.getTextCenterBold() != null) { bold = rule.getTextCenterBold(); }
+            if (rule.getTextCenterItalic() != null) { italic = rule.getTextCenterItalic(); }
+            if (rule.getTextCenterUnderline() != null) { underline = rule.getTextCenterUnderline(); }
         }
-
-        addOverheadTextAdvanced(text, position, color, size, duration, blink, 1, bold, italic, underline);
+        if (duration <= 0) {
+            String key = "PERSIST_" + rule.getId() + "_" + position;
+            ActiveOverheadText existing = null;
+            for (ActiveOverheadText t : overheadTexts) {
+                if (key.equals(t.key)) { existing = t; break; }
+            }
+            if (existing == null) {
+                ActiveOverheadText t = new ActiveOverheadText();
+                t.text = text;
+                t.color = color;
+                t.blink = blink;
+                t.size = size;
+                t.position = position;
+                t.remainingTicks = Integer.MAX_VALUE;
+                t.visiblePhase = true;
+                t.blinkInterval = 1;
+                t.blinkCounter = 0;
+                t.bold = bold; t.italic = italic; t.underline = underline;
+                t.key = key;
+                t.persistent = true;
+                t.ruleId = rule.getId();
+                overheadTexts.add(t);
+            } else {
+                existing.text = text;
+                existing.color = color;
+                existing.blink = blink;
+                existing.size = size;
+                existing.bold = bold;
+                existing.italic = italic;
+                existing.underline = underline;
+                existing.visiblePhase = true;
+                existing.persistent = true;
+                existing.ruleId = rule.getId();
+            }
+            return;
+        }
+        addOverheadTextAdvanced(text, position, color, size, duration, blink, 1, bold, italic, underline, rule.getId());
     }
 
     // Parse extended overhead text spec: [duration] [BLINK|BLINK=n] [SIZE=n] [COLOR=#RRGGBB] [BOLD] [ITALIC] [UNDERLINE] <text>
@@ -689,6 +929,10 @@ public class KPWebhookPlugin extends Plugin
 
     private void addOverheadTextAdvanced(String text, String position, Color color, int size, int duration, boolean blink, int blinkInterval, boolean bold, boolean italic, boolean underline)
     {
+        addOverheadTextAdvanced(text, position, color, size, duration, blink, blinkInterval, bold, italic, underline, -1);
+    }
+    private void addOverheadTextAdvanced(String text, String position, Color color, int size, int duration, boolean blink, int blinkInterval, boolean bold, boolean italic, boolean underline, int ruleId)
+    {
         ActiveOverheadText t = new ActiveOverheadText();
         t.text = text;
         t.color = color;
@@ -697,12 +941,12 @@ public class KPWebhookPlugin extends Plugin
         t.position = position;
         t.remainingTicks = Math.max(1, duration);
         t.visiblePhase = true;
-        // Force per-tick blinking for highlight/text consistency
         t.blinkInterval = 1;
         t.blinkCounter = 0;
         t.bold = bold;
         t.italic = italic;
         t.underline = underline;
+        t.ruleId = ruleId;
         overheadTexts.add(t);
     }
 
@@ -713,14 +957,28 @@ public class KPWebhookPlugin extends Plugin
     private void cleanupTickArtifacts(int ruleId) {
         try { highlightManager.removePersistentByRule(ruleId); } catch (Exception ignored) {}
         if (overheadTexts != null && !overheadTexts.isEmpty()) {
-            String prefix = "RULE_" + ruleId + "_";
-            overheadTexts.removeIf(t -> t.getKey() != null && t.getKey().startsWith(prefix));
+            String prefix1 = "RULE_" + ruleId + "_";
+            String prefix2 = "PERSIST_" + ruleId + "_"; // also clear persistent duration=0 texts on removal
+            overheadTexts.removeIf(t -> t.getKey() != null && (t.getKey().startsWith(prefix1) || t.getKey().startsWith(prefix2)) || t.ruleId==ruleId);
+        }
+    }
+    private void cleanupTickArtifactsLegacy(int ruleId) {
+        try { highlightManager.removePersistentByRule(ruleId); } catch (Exception ignored) {}
+        if (overheadTexts != null && !overheadTexts.isEmpty()) {
+            String prefix1 = "RULE_" + ruleId + "_";
+            String prefix2 = "PERSIST_" + ruleId + "_"; // also clear persistent duration=0 texts on removal
+            overheadTexts.removeIf(t -> t.getKey() != null && (t.getKey().startsWith(prefix1) || t.getKey().startsWith(prefix2)));
         }
     }
     public void deleteRule(int id) {
         KPWebhookPreset r = find(id);
         if (r!=null) {
             if (r.getTriggerType() == KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
+            else if (r.getTriggerType() == KPWebhookPreset.TriggerType.STAT) { // ensure STAT visuals cleared
+                removePersistentOverheadsForRule(r.getId());
+                removeOverheadsForRule(r.getId(), true);
+                try { highlightManager.removePersistentByRule(r.getId()); } catch (Exception ignored) {}
+            }
             rules.remove(r); storage.delete(r); refreshPanelTable();
         }
     }
@@ -729,7 +987,14 @@ public class KPWebhookPlugin extends Plugin
         if (r!=null) {
             boolean wasActive = r.isActive();
             r.setActive(!r.isActive());
-            if (wasActive && !r.isActive() && r.getTriggerType()== KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
+            if (wasActive && !r.isActive()) {
+                if (r.getTriggerType()== KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
+                if (r.getTriggerType()== KPWebhookPreset.TriggerType.STAT) {
+                    removePersistentOverheadsForRule(r.getId());
+                    removeOverheadsForRule(r.getId(), true);
+                    try { highlightManager.removePersistentByRule(r.getId()); } catch (Exception ignored) {}
+                }
+            }
             savePreset(r);
         }
     }
@@ -938,8 +1203,13 @@ public class KPWebhookPlugin extends Plugin
             String value = e.getValue();
             if (key != null && value != null)
             {
+                // If legacy key started with $, also attempt direct replacement of key itself
+                if (key.startsWith("$")) {
+                    text = text.replace(key, value);
+                }
                 text = text.replace("${" + key + "}", value);
                 text = text.replace("$" + key, value);
+                text = text.replace("{{" + key + "}}", value); // support double curly tokens
             }
         }
         return text;
@@ -1004,5 +1274,120 @@ public class KPWebhookPlugin extends Plugin
         // Check for the presence of any formatting parameters in the text
         String upper = text.toUpperCase(Locale.ROOT);
         return upper.contains("BLINK") || upper.contains("SIZE=") || upper.contains("COLOR=") || upper.contains("BOLD") || upper.contains("ITALIC") || upper.contains("UNDERLINE");
+    }
+
+    public void openDebugWindow() {
+        if (debugWindow == null) {
+            debugWindow = new KPWebhookDebugWindow(this);
+        }
+        if (!debugWindow.isVisible()) debugWindow.setVisible(true);
+        debugWindow.toFront();
+    }
+
+    // Helper to sanitize player names (remove icon/img tags and color tags) for matching & display
+    private String sanitizePlayerName(String name) {
+        if (name == null) return "";
+        try {
+            // Remove RuneLite style <img=..> tags and any other HTML-like tags
+            String noTags = name.replaceAll("<img=\\d+>", "");
+            noTags = Text.removeTags(noTags);
+            noTags = noTags.replace('\u00A0',' ').trim();
+            return noTags;
+        } catch (Exception e) {
+            return name.replace('\u00A0',' ').trim();
+        }
+    }
+    private boolean matchesNpc(KPWebhookPreset.NpcConfig cfg, NPC npc) {
+        if (cfg == null || npc == null) return false;
+        int id = npc.getId();
+        String name = sanitizeNpcName(npc.getName());
+        if (cfg.getNpcIds()!=null) for (Integer i : cfg.getNpcIds()) if (i != null && i == id) return true;
+        if (name != null && !name.isEmpty() && cfg.getNpcNames()!=null) {
+            String ln = name.toLowerCase(Locale.ROOT);
+            for (String n : cfg.getNpcNames()) if (ln.equals(n)) return true;
+        }
+        return false;
+    }
+    private String sanitizeNpcName(String name) {
+        if (name == null) return "";
+        try {
+            String noTags = Text.removeTags(name);
+            noTags = noTags.replace('\u00A0',' ').trim();
+            return noTags;
+        } catch (Exception e) { return name.replace('\u00A0',' ').trim(); }
+    }
+
+    private void refreshPersistentStatVisuals(Skill skill, int boostedValue) {
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.STAT) continue;
+            KPWebhookPreset.StatConfig cfg = r.getStatConfig();
+            if (cfg == null || cfg.getSkill() != skill || cfg.getMode() == KPWebhookPreset.StatMode.LEVEL_UP) continue;
+            if (!r.isLastConditionMet()) continue;
+            boolean condition = cfg.getMode()== KPWebhookPreset.StatMode.ABOVE ? boostedValue > cfg.getThreshold() : boostedValue < cfg.getThreshold();
+            if (!condition) continue;
+            // only refresh texts/highlights that are persistent (duration 0) – non-persistent handled by re-trigger
+            // Build context
+            Map<String,String> ctx = new HashMap<>();
+            try { ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown"); } catch (Exception ignored) { ctx.put("player","Unknown"); }
+            ctx.put("stat", skill.name());
+            ctx.put("current", String.valueOf(boostedValue));
+            ctx.put("value", String.valueOf(cfg.getThreshold()));
+            try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
+            try { ctx.put("STAT", String.valueOf(client.getRealSkillLevel(skill))); } catch (Exception ignored) { ctx.put("STAT", ""); }
+            try { ctx.put("CURRENT_STAT", String.valueOf(client.getBoostedSkillLevel(skill))); } catch (Exception ignored) { ctx.put("CURRENT_STAT", ""); }
+            for (Skill s : Skill.values()) {
+                try {
+                    int real = client.getRealSkillLevel(s);
+                    int boosted = client.getBoostedSkillLevel(s);
+                    ctx.put("$"+s.name(), String.valueOf(real));
+                    ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
+                    ctx.put(s.name(), String.valueOf(real));
+                    ctx.put("CURRENT_"+s.name(), String.valueOf(boosted));
+                } catch (Exception ignored) {}
+            }
+            String cmds = r.getCommands(); if (cmds == null || cmds.isBlank()) continue;
+            for (String rawLine : cmds.split("\r?\n")) {
+                String line = rawLine.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                if (P_TEXT_OVER.matcher(line).find() && r.getTextOverDuration()!=null && r.getTextOverDuration()<=0) {
+                    java.util.regex.Matcher m = P_TEXT_OVER.matcher(line); if (m.find()) { addOverheadTextFromPreset(expand(m.group(1).trim(), ctx), "Above", r); }
+                } else if (P_TEXT_UNDER.matcher(line).find() && r.getTextUnderDuration()!=null && r.getTextUnderDuration()<=0) {
+                    java.util.regex.Matcher m = P_TEXT_UNDER.matcher(line); if (m.find()) { addOverheadTextFromPreset(expand(m.group(1).trim(), ctx), "Under", r); }
+                } else if (P_TEXT_CENTER.matcher(line).find() && r.getTextCenterDuration()!=null && r.getTextCenterDuration()<=0) {
+                    java.util.regex.Matcher m = P_TEXT_CENTER.matcher(line); if (m.find()) { addOverheadTextFromPreset(expand(m.group(1).trim(), ctx), "Center", r); }
+                }
+            }
+        }
+    }
+
+    /* ================= Overhead text removal helpers (added) ================= */
+    /**
+     * Remove overhead texts for a given rule.
+     * @param ruleId rule identifier
+     * @param includePersistent if true, also remove persistent (duration=0) texts; if false keep persistent ones
+     */
+    private void removeOverheadsForRule(int ruleId, boolean includePersistent) {
+        if (overheadTexts == null || overheadTexts.isEmpty()) return;
+        final String prefixRule = "RULE_" + ruleId + "_"; // used by tick-generated keyed texts
+        final String prefixPersist = "PERSIST_" + ruleId + "_"; // persistent keyed texts
+        overheadTexts.removeIf(t -> {
+            if (t == null) return false;
+            boolean owned = t.ruleId == ruleId;
+            if (!owned && t.key != null) {
+                if (t.key.startsWith(prefixRule) || t.key.startsWith(prefixPersist)) owned = true;
+            }
+            if (!owned) return false;
+            if (!includePersistent && t.persistent) return false; // keep persistent if not requested
+            return true; // remove
+        });
+    }
+
+    /**
+     * Remove only persistent overhead texts (duration=0) for a rule.
+     */
+    private void removePersistentOverheadsForRule(int ruleId) {
+        if (overheadTexts == null || overheadTexts.isEmpty()) return;
+        final String prefixPersist = "PERSIST_" + ruleId + "_";
+        overheadTexts.removeIf(t -> t != null && t.persistent && (t.ruleId == ruleId || (t.key != null && t.key.startsWith(prefixPersist))));
     }
 }
