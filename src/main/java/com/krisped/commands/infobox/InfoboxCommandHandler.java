@@ -61,8 +61,9 @@ public class InfoboxCommandHandler {
         int duration = rule != null && rule.getInfoboxDuration()!=null? rule.getInfoboxDuration():100;
         BufferedImage icon = sprite ? loadSprite(id) : loadItem(id);
         if (icon == null) return true; // invalid id but treat as consumed
-        IconInfoBox ib = new IconInfoBox(icon, plugin, duration, (custom!=null && !custom.isEmpty()) ? custom : (sprite?"SPRITE:"+id:"ITEM:"+id));
-        active.add(new RuntimeBox(ib));
+        int ruleId = rule != null? rule.getId(): -1;
+        IconInfoBox ib = new IconInfoBox(icon, plugin, duration, (custom!=null && !custom.isEmpty()) ? custom : (sprite?"SPRITE:"+id:"ITEM:"+id), ruleId);
+        active.add(new RuntimeBox(ib, ruleId));
         infoBoxManager.addInfoBox(ib);
         return true;
     }
@@ -94,19 +95,33 @@ public class InfoboxCommandHandler {
         active.clear();
     }
 
-    private static class RuntimeBox { IconInfoBox info; RuntimeBox(IconInfoBox i){ this.info = i; } }
+    public void removeByRule(int ruleId) {
+        if (ruleId < 0 || active.isEmpty()) return;
+        active.removeIf(rb -> {
+            if (rb.ruleId == ruleId) {
+                try { infoBoxManager.removeInfoBox(rb.info); } catch (Exception ignored) {}
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private static class RuntimeBox { IconInfoBox info; int ruleId; RuntimeBox(IconInfoBox i, int ruleId){ this.info = i; this.ruleId = ruleId; } }
 
     private static class IconInfoBox extends InfoBox {
         private int remaining;
         private final String tooltip;
-        IconInfoBox(BufferedImage image, KPWebhookPlugin plugin, int duration, String tooltip) {
+        private final int ruleId;
+        IconInfoBox(BufferedImage image, KPWebhookPlugin plugin, int duration, String tooltip, int ruleId) {
             super(image, plugin);
             this.remaining = duration;
             this.tooltip = tooltip;
+            this.ruleId = ruleId;
         }
+        public int getRuleId(){ return ruleId; }
         @Override public String getTooltip() { return tooltip; }
         @Override public String getName() { return "INFOBOX"; }
-        @Override public String getText() { return ""; } // no countdown text
+        @Override public String getText() { return ""; }
         @Override public Color getTextColor() { return Color.WHITE; }
         @Override public BufferedImage getImage() { return getImageOriginal(); }
         private BufferedImage getImageOriginal() { return super.getImage(); }

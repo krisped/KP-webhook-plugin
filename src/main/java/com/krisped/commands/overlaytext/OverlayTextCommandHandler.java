@@ -37,7 +37,7 @@ public class OverlayTextCommandHandler {
         int duration = safe(rule.getOverlayTextDuration(), 100);
         int size = safe(rule.getOverlayTextSize(), 16);
         Color color = parseColor(rule.getOverlayTextColor(), Color.WHITE);
-        manager.add(text, duration, color, true, size);
+        manager.addForRule(rule!=null?rule.getId():-1, text, duration, color, true, size);
         return true;
     }
 

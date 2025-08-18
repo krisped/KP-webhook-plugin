@@ -4,6 +4,7 @@ import com.krisped.KPWebhookPreset;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import java.util.*;
 import java.util.regex.Pattern;
 
 @Singleton
@@ -20,66 +21,101 @@ public class HighlightCommandHandler {
         this.highlightManager = highlightManager;
     }
 
-    public boolean handle(String lineUpper, KPWebhookPreset rule) {
-        if (P_OUTLINE.matcher(lineUpper).find()) {
-            int dur = safe(rule.getHlOutlineDuration(),5);
-            if (dur <= 0) {
-                highlightManager.upsertHighlight(rule.getId(), HighlightType.OUTLINE,
-                        safe(rule.getHlOutlineWidth(),2), rule.getHlOutlineColor(), bool(rule.getHlOutlineBlink()));
-            } else {
-                highlightManager.addHighlight(HighlightType.OUTLINE,
-                        dur,
-                        safe(rule.getHlOutlineWidth(),2),
-                        rule.getHlOutlineColor(),
-                        bool(rule.getHlOutlineBlink()));
+    public boolean handle(String rawLine, KPWebhookPreset rule) {
+        if (rawLine == null) return false;
+        String line = rawLine.trim();
+        String upper = line.toUpperCase(Locale.ROOT);
+        HighlightType type = null;
+        if (P_OUTLINE.matcher(upper).find()) type = HighlightType.OUTLINE;
+        else if (P_TILE.matcher(upper).find()) type = HighlightType.TILE;
+        else if (P_HULL.matcher(upper).find()) type = HighlightType.HULL;
+        else if (P_MINIMAP.matcher(upper).find()) type = HighlightType.MINIMAP;
+        if (type == null) return false;
+
+        // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>]
+        String remainder = line.substring(line.indexOf(' ')+1).trim(); // may contain target or be same if no space
+        ActiveHighlight.TargetType targetType = ActiveHighlight.TargetType.LOCAL_PLAYER;
+        Set<String> targetNames = null;
+        Set<Integer> targetIds = null;
+        if (!remainder.isEmpty()) {
+            String[] toks = remainder.split("\\s+", 3); // at most 3 parts
+            // If second token is target spec
+            if (toks.length >= 1) {
+                String t0 = toks[0].toUpperCase(Locale.ROOT);
+                if (t0.equals("LOCAL_PLAYER")) {
+                    targetType = ActiveHighlight.TargetType.LOCAL_PLAYER; // nothing else
+                } else if (t0.equals("PLAYER") && toks.length >= 2) {
+                    targetType = ActiveHighlight.TargetType.PLAYER_NAME;
+                    targetNames = new HashSet<>();
+                    targetNames.add(normalizeName(toks[1]));
+                } else if (t0.equals("NPC") && toks.length >= 2) {
+                    String spec = toks[1];
+                    if (spec.matches("\\d+")) {
+                        targetType = ActiveHighlight.TargetType.NPC_ID;
+                        targetIds = new HashSet<>();
+                        try { targetIds.add(Integer.parseInt(spec)); } catch (NumberFormatException ignored) {}
+                    } else {
+                        targetType = ActiveHighlight.TargetType.NPC_NAME;
+                        targetNames = new HashSet<>();
+                        targetNames.add(normalizeName(spec));
+                    }
+                } else {
+                    // No recognized target keyword -> treat as no target spec (text or leftover) so keep LOCAL_PLAYER.
+                }
             }
-            return true;
         }
-        if (P_TILE.matcher(lineUpper).find()) {
-            int dur = safe(rule.getHlTileDuration(),5);
-            if (dur <= 0) {
-                highlightManager.upsertHighlight(rule.getId(), HighlightType.TILE,
-                        safe(rule.getHlTileWidth(),2), rule.getHlTileColor(), bool(rule.getHlTileBlink()));
-            } else {
-                highlightManager.addHighlight(HighlightType.TILE,
-                        dur,
-                        safe(rule.getHlTileWidth(),2),
-                        rule.getHlTileColor(),
-                        bool(rule.getHlTileBlink()));
-            }
-            return true;
+
+        boolean persistent = durationFor(type, rule) <= 0;
+        if (persistent) {
+            highlightManager.upsertHighlightTargeted(rule.getId(), type,
+                    widthFor(type, rule), colorFor(type, rule), blinkFor(type, rule),
+                    targetType, targetNames, targetIds);
+        } else {
+            // Use rule-associated variant so we can remove immediately on preset deactivation
+            highlightManager.addHighlightTargetedForRule(rule.getId(), type, durationFor(type, rule), widthFor(type, rule),
+                    colorFor(type, rule), blinkFor(type, rule), targetType, targetNames, targetIds);
         }
-        if (P_HULL.matcher(lineUpper).find()) {
-            int dur = safe(rule.getHlHullDuration(),5);
-            if (dur <= 0) {
-                highlightManager.upsertHighlight(rule.getId(), HighlightType.HULL,
-                        safe(rule.getHlHullWidth(),2), rule.getHlHullColor(), bool(rule.getHlHullBlink()));
-            } else {
-                highlightManager.addHighlight(HighlightType.HULL,
-                        dur,
-                        safe(rule.getHlHullWidth(),2),
-                        rule.getHlHullColor(),
-                        bool(rule.getHlHullBlink()));
-            }
-            return true;
+        return true;
+    }
+
+    private int durationFor(HighlightType t, KPWebhookPreset r) {
+        switch (t) {
+            case OUTLINE: return safe(r.getHlOutlineDuration(),5);
+            case TILE: return safe(r.getHlTileDuration(),5);
+            case HULL: return safe(r.getHlHullDuration(),5);
+            case MINIMAP: return safe(r.getHlMinimapDuration(),5);
         }
-        if (P_MINIMAP.matcher(lineUpper).find()) {
-            int dur = safe(rule.getHlMinimapDuration(),5);
-            if (dur <= 0) {
-                highlightManager.upsertHighlight(rule.getId(), HighlightType.MINIMAP,
-                        safe(rule.getHlMinimapWidth(),2), rule.getHlMinimapColor(), bool(rule.getHlMinimapBlink()));
-            } else {
-                highlightManager.addHighlight(HighlightType.MINIMAP,
-                        dur,
-                        safe(rule.getHlMinimapWidth(),2),
-                        rule.getHlMinimapColor(),
-                        bool(rule.getHlMinimapBlink()));
-            }
-            return true;
+        return 5;
+    }
+    private int widthFor(HighlightType t, KPWebhookPreset r) {
+        switch (t) {
+            case OUTLINE: return safe(r.getHlOutlineWidth(),2);
+            case TILE: return safe(r.getHlTileWidth(),2);
+            case HULL: return safe(r.getHlHullWidth(),2);
+            case MINIMAP: return safe(r.getHlMinimapWidth(),2);
+        }
+        return 2;
+    }
+    private String colorFor(HighlightType t, KPWebhookPreset r) {
+        switch (t) {
+            case OUTLINE: return r.getHlOutlineColor();
+            case TILE: return r.getHlTileColor();
+            case HULL: return r.getHlHullColor();
+            case MINIMAP: return r.getHlMinimapColor();
+        }
+        return "#FFFF00";
+    }
+    private boolean blinkFor(HighlightType t, KPWebhookPreset r) {
+        switch (t) {
+            case OUTLINE: return bool(r.getHlOutlineBlink());
+            case TILE: return bool(r.getHlTileBlink());
+            case HULL: return bool(r.getHlHullBlink());
+            case MINIMAP: return bool(r.getHlMinimapBlink());
         }
         return false;
     }
 
     private int safe(Integer v, int def){ return v==null?def:v; }
     private boolean bool(Boolean b){ return b!=null && b; }
+    private String normalizeName(String s) { return s==null?"":s.replace('_',' ').trim().toLowerCase(Locale.ROOT); }
 }

@@ -12,25 +12,53 @@ public class HighlightManager {
     private final List<ActiveHighlight> activeHighlights = new ArrayList<>();
 
     public void addHighlight(HighlightType type, int duration, int width, String colorHex, boolean blink) {
+        addHighlightTargeted(type, duration, width, colorHex, blink, ActiveHighlight.TargetType.LOCAL_PLAYER, null, null);
+    }
+
+    public void addHighlightTargeted(HighlightType type, int duration, int width, String colorHex, boolean blink,
+                                     ActiveHighlight.TargetType targetType,
+                                     Set<String> targetNames,
+                                     Set<Integer> targetIds) {
         if (duration <= 0) duration = 1;
         if (width <= 0) width = 1;
         Color c = parseColor(colorHex, "#FFFF00");
-        activeHighlights.add(new ActiveHighlight(type, duration, c, width, blink, true, null, false));
+        activeHighlights.add(new ActiveHighlight(type, duration, c, width, blink, true, null, false, targetType, targetNames, targetIds));
     }
 
-    /** Upsert a persistent highlight keyed by (ruleId,type). */
+    // New: add non-persistent highlight with rule association for later cleanup
+    public void addHighlightTargetedForRule(int ruleId, HighlightType type, int duration, int width, String colorHex, boolean blink,
+                                            ActiveHighlight.TargetType targetType,
+                                            Set<String> targetNames,
+                                            Set<Integer> targetIds) {
+        if (duration <= 0) duration = 1;
+        if (width <= 0) width = 1;
+        Color c = parseColor(colorHex, "#FFFF00");
+        activeHighlights.add(new ActiveHighlight(type, duration, c, width, blink, true, ruleId, false, targetType, targetNames, targetIds));
+    }
+
+    /** Upsert a persistent highlight keyed by (ruleId,type,target signature). */
     public void upsertHighlight(int ruleId, HighlightType type, int width, String colorHex, boolean blink) {
+        upsertHighlightTargeted(ruleId, type, width, colorHex, blink, ActiveHighlight.TargetType.LOCAL_PLAYER, null, null);
+    }
+
+    public void upsertHighlightTargeted(int ruleId, HighlightType type, int width, String colorHex, boolean blink,
+                                        ActiveHighlight.TargetType targetType,
+                                        Set<String> targetNames,
+                                        Set<Integer> targetIds) {
         if (width <= 0) width = 1;
         Color c = parseColor(colorHex, "#FFFF00");
         ActiveHighlight found = null;
         for (ActiveHighlight h : activeHighlights) {
             if (Boolean.TRUE.equals(h.isPersistent()) && h.getRuleId()!=null && h.getRuleId()==ruleId && h.getType()==type) {
-                found = h; break;
+                // Also require same target signature
+                boolean sameTarget = Objects.equals(h.getTargetType(), targetType)
+                        && Objects.equals(h.getTargetNames(), targetNames)
+                        && Objects.equals(h.getTargetIds(), targetIds);
+                if (sameTarget) { found = h; break; }
             }
         }
         if (found == null) {
-            // remainingTicks small (2) and persistent=true so tick() will not decrement below 1
-            activeHighlights.add(new ActiveHighlight(type, 2, c, width, blink, true, ruleId, true));
+            activeHighlights.add(new ActiveHighlight(type, 2, c, width, blink, true, ruleId, true, targetType, targetNames, targetIds));
         } else {
             found.setColor(c);
             found.setWidth(width);
@@ -47,6 +75,17 @@ public class HighlightManager {
         while (it.hasNext()) {
             ActiveHighlight h = it.next();
             if (h.isPersistent() && h.getRuleId()!=null && h.getRuleId()==ruleId) {
+                it.remove();
+            }
+        }
+    }
+
+    // New: remove any highlight (persistent or not) linked to ruleId
+    public void removeAllByRule(int ruleId) {
+        Iterator<ActiveHighlight> it = activeHighlights.iterator();
+        while (it.hasNext()) {
+            ActiveHighlight h = it.next();
+            if (h.getRuleId()!=null && h.getRuleId()==ruleId) {
                 it.remove();
             }
         }

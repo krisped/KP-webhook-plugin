@@ -45,8 +45,8 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, MESSAGE, VARBIT, VARPLAYER, TICK. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
-        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay"}
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target"}
 )
 public class KPWebhookPlugin extends Plugin
 {
@@ -85,6 +85,14 @@ public class KPWebhookPlugin extends Plugin
     private volatile long lastScreenshotRequestMs = 0; // debounce to prevent double screenshot
     private static final long SCREENSHOT_COOLDOWN_MS = 800; // ms cooldown
 
+    // === Target tracking state (added) ===
+    private Actor currentTarget; // may be NPC or Player
+    private int targetLastActiveTick = -1; // last tick we saw interaction/combat
+    private int gameTickCounter = 0; // incremented each GameTick
+    private int lastTargetAnimationId = -1; // last animation id for current target
+    private static final int TARGET_RETENTION_TICKS = 50; // ~30s retention (50 * 0.6s)
+    // === End target tracking state ===
+
     // Overhead text rendering state
     @Data
     public static class ActiveOverheadText {
@@ -101,11 +109,15 @@ public class KPWebhookPlugin extends Plugin
         boolean italic;
         boolean underline;
         String key; // optional unique key for persistent (TICK) texts
-        boolean persistent; // new: if true, do not decrement/remove automatically
-        int ruleId = -1; // new: owning rule id for cleanup
+        boolean persistent; // if true, do not decrement/remove automatically
+        int ruleId = -1; // owning rule id for cleanup
+        // Targeting support
+        public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID }
+        TargetType targetType = TargetType.LOCAL_PLAYER;
+        java.util.Set<String> targetNames; // lowercase normalized (players or NPC names)
+        java.util.Set<Integer> targetIds; // npc ids
     }
     private final java.util.List<ActiveOverheadText> overheadTexts = new ArrayList<>();
-    private final Map<Integer,Integer> lastVarpValues = new HashMap<>(); // cache for VARPLAYER polling
 
     public java.util.List<ActiveOverheadText> getOverheadTexts() { return overheadTexts; }
 
@@ -202,6 +214,9 @@ public class KPWebhookPlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick tick)
     {
+        gameTickCounter++;
+        // Update target first so downstream triggers can use updated token
+        updateAndProcessTarget();
         // Continuous TICK trigger processing via service
         if (tickTriggerService != null)
         {
@@ -271,7 +286,10 @@ public class KPWebhookPlugin extends Plugin
                 ActiveOverheadText t = it.next();
                 if (t.blink)
                 {
-                    t.visiblePhase = !t.visiblePhase;
+                    t.blinkCounter++;
+                    if (t.blinkCounter % Math.max(1, t.blinkInterval) == 0) {
+                        t.visiblePhase = !t.visiblePhase;
+                    }
                 }
                 else
                 {
@@ -315,6 +333,82 @@ public class KPWebhookPlugin extends Plugin
                 }
             });
         } catch (Exception ignored) {}
+    }
+
+    private void updateAndProcessTarget() {
+        try {
+            Player local = client.getLocalPlayer();
+            Actor interacting = null;
+            if (local != null) {
+                interacting = local.getInteracting();
+                if (interacting != null) {
+                    targetLastActiveTick = gameTickCounter; // refresh activity
+                }
+            }
+            boolean targetExpired = false;
+            if (currentTarget != null && (gameTickCounter - targetLastActiveTick) > TARGET_RETENTION_TICKS) {
+                // retention window passed
+                targetExpired = true;
+            }
+            boolean targetChanged = false;
+            if (interacting != null) {
+                if (currentTarget == null || currentTarget != interacting) {
+                    targetChanged = true;
+                }
+            } else if (targetExpired && currentTarget != null) {
+                targetChanged = true; // clearing target after expiry
+            }
+            if (targetChanged) {
+                Actor old = currentTarget;
+                if (targetExpired || interacting == null) {
+                    currentTarget = null;
+                    lastTargetAnimationId = -1;
+                } else {
+                    currentTarget = interacting;
+                    lastTargetAnimationId = currentTarget.getAnimation();
+                }
+                fireTargetChangeTriggers(old, currentTarget);
+            }
+            // Animation change for target
+            if (currentTarget != null) {
+                int anim = currentTarget.getAnimation();
+                if (anim != lastTargetAnimationId) {
+                    lastTargetAnimationId = anim;
+                    fireTargetAnimationTriggers(anim);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void fireTargetChangeTriggers(Actor oldTarget, Actor newTarget) {
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.TARGET) continue;
+            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(),
+                    (newTarget instanceof Player)? (Player)newTarget : null,
+                    (newTarget instanceof NPC)? (NPC)newTarget : null);
+        }
+    }
+
+    private void fireTargetAnimationTriggers(int newAnim) {
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_TARGET) continue;
+            KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
+            if (cfg == null || cfg.getAnimationId() == null) continue;
+            if (cfg.getAnimationId() == newAnim) {
+                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(),
+                        (currentTarget instanceof Player)? (Player)currentTarget : null,
+                        (currentTarget instanceof NPC)? (NPC)currentTarget : null);
+            }
+        }
+    }
+
+    private String getCurrentTargetName() {
+        try {
+            if (currentTarget == null) return "";
+            if (currentTarget instanceof Player) return sanitizePlayerName(((Player)currentTarget).getName());
+            if (currentTarget instanceof NPC) return sanitizeNpcName(((NPC)currentTarget).getName());
+        } catch (Exception ignored) {}
+        return "";
     }
 
     /* ================= Events ================= */
@@ -584,6 +678,8 @@ public class KPWebhookPlugin extends Plugin
         if (cmds == null || cmds.isBlank()) return;
         Map<String,String> ctx = new HashMap<>();
         ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
+        ctx.put("TARGET", getCurrentTargetName());
+        ctx.put("$TARGET", getCurrentTargetName());
         ctx.put("stat", stat!=null?stat.name():(statCfg!=null && statCfg.getSkill()!=null? statCfg.getSkill().name():""));
         ctx.put("current", current>=0? String.valueOf(current):"");
         ctx.put("value", statCfg!=null? String.valueOf(statCfg.getThreshold()):"");
@@ -693,6 +789,8 @@ public class KPWebhookPlugin extends Plugin
         ctx.put("otherCombat", "");
         ctx.put("message", messageText); // new token
         ctx.put("messageTypeId", String.valueOf(messageTypeId));
+        ctx.put("TARGET", getCurrentTargetName());
+        ctx.put("$TARGET", getCurrentTargetName());
         // World token also for message-based rules
         try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
         // No specific stat context here
@@ -726,355 +824,53 @@ public class KPWebhookPlugin extends Plugin
     {
         String upper = line.toUpperCase(Locale.ROOT);
         if (upper.equals("STOP")) { stopAll(); return; }
+        if (upper.startsWith("STOP_RULE")) {
+            // Formats: STOP_RULE (current) or STOP_RULE <id>
+            String[] parts = line.split("\\s+");
+            int rid = (rule!=null? rule.getId(): -1);
+            if (parts.length > 1) {
+                try { rid = Integer.parseInt(parts[1]); } catch (Exception ignored) {}
+            }
+            if (rid >= 0) stopRule(rid);
+            return;
+        }
         if (upper.startsWith("NOTIFY ")) { addGameMessage(expand(line.substring("NOTIFY ".length()), ctx)); }
         else if (upper.startsWith("WEBHOOK ")) { if (!webhookAvailable(rule)) return; sendWebhookMessage(resolveWebhook(rule), expand(line.substring("WEBHOOK ".length()), ctx)); }
         else if (upper.startsWith("SCREENSHOT")) { if (!webhookAvailable(rule)) return; String rest = line.length()>"SCREENSHOT".length()? line.substring("SCREENSHOT".length()).trim():""; captureAndSendSimpleScreenshot(resolveWebhook(rule), expand(rest, ctx)); }
-        else if (P_TEXT_UNDER.matcher(line).find()) {
-            java.util.regex.Matcher m = P_TEXT_UNDER.matcher(line);
-            if (m.find()) {
-                String text = expand(m.group(1).trim(), ctx);
-                addOverheadTextFromPreset(text, "Under", rule);
-            }
-        }
-        else if (P_TEXT_OVER.matcher(line).find()) {
-            java.util.regex.Matcher m = P_TEXT_OVER.matcher(line);
-            if (m.find()) {
-                String text = expand(m.group(1).trim(), ctx);
-                addOverheadTextFromPreset(text, "Above", rule);
-            }
-        }
-        else if (P_TEXT_CENTER.matcher(line).find()) {
-            java.util.regex.Matcher m = P_TEXT_CENTER.matcher(line);
-            if (m.find()) {
-                String text = expand(m.group(1).trim(), ctx);
-                addOverheadTextFromPreset(text, "Center", rule);
-            }
+        else if (P_TEXT_UNDER.matcher(line).find() || P_TEXT_OVER.matcher(line).find() || P_TEXT_CENTER.matcher(line).find()) {
+            handleTargetedTextCommand(rule, line, ctx);
         }
         else if (overlayTextCommandHandler.handle(line, rule)) { /* OVERLAY_TEXT handled */ }
         else if (infoboxCommandHandler.handle(line, rule, ctx)) { /* infobox handled */ }
-        else if (highlightCommandHandler.handle(upper, rule)) { /* highlight handled */ }
+        else if (highlightCommandHandler.handle(line, rule)) { /* highlight handled */ }
         else { /* unknown command */ }
     }
 
-    // Simplified method to add overhead text using only preset settings
-    private void addOverheadTextFromPreset(String text, String position, KPWebhookPreset rule)
-    {
-        if (text == null || text.isBlank()) return;
-        Color color = Color.YELLOW;
-        boolean blink = false;
-        int size = 16;
-        int duration = 50;
-        boolean bold = false;
-        boolean italic = false;
-        boolean underline = false;
-        if ("Under".equals(position)) {
-            if (rule.getTextUnderColor() != null) { color = parseColor(rule.getTextUnderColor().replace("#", ""), color); }
-            if (rule.getTextUnderBlink() != null) { blink = rule.getTextUnderBlink(); }
-            if (rule.getTextUnderSize() != null) { size = rule.getTextUnderSize(); }
-            if (rule.getTextUnderDuration() != null) { duration = rule.getTextUnderDuration(); }
-            if (rule.getTextUnderBold() != null) { bold = rule.getTextUnderBold(); }
-            if (rule.getTextUnderItalic() != null) { italic = rule.getTextUnderItalic(); }
-            if (rule.getTextUnderUnderline() != null) { underline = rule.getTextUnderUnderline(); }
-        } else if ("Above".equals(position)) {
-            if (rule.getTextOverColor() != null) { color = parseColor(rule.getTextOverColor().replace("#", ""), color); }
-            if (rule.getTextOverBlink() != null) { blink = rule.getTextOverBlink(); }
-            if (rule.getTextOverSize() != null) { size = rule.getTextOverSize(); }
-            if (rule.getTextOverDuration() != null) { duration = rule.getTextOverDuration(); }
-            if (rule.getTextOverBold() != null) { bold = rule.getTextOverBold(); }
-            if (rule.getTextOverItalic() != null) { italic = rule.getTextOverItalic(); }
-            if (rule.getTextOverUnderline() != null) { underline = rule.getTextOverUnderline(); }
-        } else if ("Center".equals(position)) {
-            if (rule.getTextCenterColor() != null) { color = parseColor(rule.getTextCenterColor().replace("#", ""), color); }
-            if (rule.getTextCenterBlink() != null) { blink = rule.getTextCenterBlink(); }
-            if (rule.getTextCenterSize() != null) { size = rule.getTextCenterSize(); }
-            if (rule.getTextCenterDuration() != null) { duration = rule.getTextCenterDuration(); }
-            if (rule.getTextCenterBold() != null) { bold = rule.getTextCenterBold(); }
-            if (rule.getTextCenterItalic() != null) { italic = rule.getTextCenterItalic(); }
-            if (rule.getTextCenterUnderline() != null) { underline = rule.getTextCenterUnderline(); }
-        }
-        if (duration <= 0) {
-            String key = "PERSIST_" + rule.getId() + "_" + position;
-            ActiveOverheadText existing = null;
-            for (ActiveOverheadText t : overheadTexts) {
-                if (key.equals(t.key)) { existing = t; break; }
-            }
-            if (existing == null) {
-                ActiveOverheadText t = new ActiveOverheadText();
-                t.text = text;
-                t.color = color;
-                t.blink = blink;
-                t.size = size;
-                t.position = position;
-                t.remainingTicks = Integer.MAX_VALUE;
-                t.visiblePhase = true;
-                t.blinkInterval = 1;
-                t.blinkCounter = 0;
-                t.bold = bold; t.italic = italic; t.underline = underline;
-                t.key = key;
-                t.persistent = true;
-                t.ruleId = rule.getId();
-                overheadTexts.add(t);
-            } else {
-                existing.text = text;
-                existing.color = color;
-                existing.blink = blink;
-                existing.size = size;
-                existing.bold = bold;
-                existing.italic = italic;
-                existing.underline = underline;
-                existing.visiblePhase = true;
-                existing.persistent = true;
-                existing.ruleId = rule.getId();
-            }
-            return;
-        }
-        addOverheadTextAdvanced(text, position, color, size, duration, blink, 1, bold, italic, underline, rule.getId());
+    private void stopRule(int ruleId) {
+        // Remove all visuals and sequences belonging to a specific rule without changing its active flag.
+        try { highlightManager.removeAllByRule(ruleId); } catch (Exception ignored) {}
+        try { overlayTextManager.removeByRule(ruleId); } catch (Exception ignored) {}
+        try { infoboxCommandHandler.removeByRule(ruleId); } catch (Exception ignored) {}
+        removeOverheadsForRule(ruleId, true);
+        removePersistentOverheadsForRule(ruleId);
+        cancelSequencesForRule(ruleId);
     }
 
-    // Parse extended overhead text spec: [duration] [BLINK|BLINK=n] [SIZE=n] [COLOR=#RRGGBB] [BOLD] [ITALIC] [UNDERLINE] <text>
-    private void parseAndAddOverheadText(String spec, String position)
-    {
-        if (spec == null || spec.isBlank()) return;
-        int duration = 50; // ticks
-        boolean blink = false;
-        int blinkInterval = 1; // Default to every tick like highlights
-        int size = 16;
-        Color color = Color.YELLOW;
-        boolean bold=false, italic=false, underline=false;
-
-        String[] tokens = spec.trim().split("\\s+");
-        StringBuilder textBuilder = new StringBuilder();
-        boolean durationSet = false;
-        int i = 0;
-
-        // DEBUG: Log what we're parsing
-        log.info("Parsing TEXT spec: '{}' into {} tokens", spec, tokens.length);
-
-        // Backwards compatible: legacy first-token duration still works via generic loop below
-        for (; i < tokens.length; i++)
-        {
-            String t = tokens[i];
-            String tUpper = t.toUpperCase(Locale.ROOT);
-            boolean consumed = false;
-
-            log.info("Processing token[{}]: '{}' (upper: '{}')", i, t, tUpper);
-
-            // Allow numeric duration anywhere before actual text starts
-            if (!durationSet && textBuilder.length()==0 && t.matches("\\d+")) {
-                try {
-                    duration = Math.max(1, Integer.parseInt(t));
-                    log.info("Set duration to: {}", duration);
-                } catch (Exception ignored) {}
-                durationSet = true; consumed = true;
-            }
-            else if (tUpper.equals("BLINK") || tUpper.startsWith("BLINK=")) {
-                blink = true; consumed = true;
-                log.info("Enabled blink");
-                if (t.contains("=")) {
-                    String[] kv = t.split("=",2); if (kv.length==2) {
-                        try {
-                            blinkInterval = Math.max(1, Integer.parseInt(kv[1]));
-                            log.info("Set blink interval to: {}", blinkInterval);
-                        } catch (Exception ignored) {}
-                    }
-                }
-            } else if (tUpper.startsWith("BLINK:")) { // alternate delimiter
-                String[] kv = t.split(":",2); if (kv.length==2) { blink = true; consumed = true; try { blinkInterval = Math.max(1, Integer.parseInt(kv[1])); } catch (Exception ignored) {} }
-            } else if (tUpper.startsWith("SIZE=")) {
-                consumed = true; try { size = Math.max(6, Integer.parseInt(t.substring(5))); } catch (Exception ignored) {}
-            } else if (tUpper.startsWith("COLOR=") || tUpper.startsWith("COLOUR=")) {
-                consumed = true; String val = t.contains("=")? t.substring(t.indexOf('=')+1):""; color = parseColor(val, color);
-            } else if (t.startsWith("#") && t.length()==7) { // #RRGGBB
-                consumed = true; color = parseColor(t, color);
-            } else if (tUpper.equals("BOLD")) { consumed = true; bold = true; }
-            else if (tUpper.equals("ITALIC")) { consumed = true; italic = true; }
-            else if (tUpper.equals("UNDERLINE") || tUpper.equals("UL")) { consumed = true; underline = true; }
-            else if (tUpper.equals("--")) { // Treat rest as text
-                i++; while (i < tokens.length) { if (textBuilder.length()>0) textBuilder.append(' '); textBuilder.append(tokens[i]); i++; }
-                break;
-            }
-            if (!consumed) {
-                // Start of actual text; append this and the rest raw
-                for (int j=i; j<tokens.length; j++) {
-                    if (textBuilder.length()>0) textBuilder.append(' ');
-                    textBuilder.append(tokens[j]);
-                }
-                break;
-            }
-        }
-        String text = textBuilder.length()>0? textBuilder.toString().trim():"";
-
-        log.info("Final parsed values - Duration: {}, Blink: {}, BlinkInterval: {}, Text: '{}'",
-                duration, blink, blinkInterval, text);
-
-        if (text.isEmpty()) return;
-        addOverheadTextAdvanced(text, position, color, size, duration, blink, blinkInterval, bold, italic, underline);
-    }
-
-    private Color parseColor(String val, Color fallback) {
-        if (val == null) return fallback;
-        val = val.trim();
-        if (val.startsWith("#")) val = val.substring(1);
-        if (val.matches("(?i)^[0-9A-F]{6}$")) {
-            try { int rgb = Integer.parseInt(val,16); return new Color(rgb); } catch (Exception ignored) {}
-        }
-        return fallback;
-    }
-
-    public void addOverheadText(KPWebhookPreset rule, String text, String position)
-    {
-        if (text == null || text.isBlank()) return;
-        addOverheadTextAdvanced(text.trim(), position, Color.YELLOW, 16, 50, false, 1, false, false, false);
-    }
-
-    private void addOverheadTextAdvanced(String text, String position, Color color, int size, int duration, boolean blink, int blinkInterval, boolean bold, boolean italic, boolean underline)
-    {
-        addOverheadTextAdvanced(text, position, color, size, duration, blink, blinkInterval, bold, italic, underline, -1);
-    }
-    private void addOverheadTextAdvanced(String text, String position, Color color, int size, int duration, boolean blink, int blinkInterval, boolean bold, boolean italic, boolean underline, int ruleId)
-    {
-        ActiveOverheadText t = new ActiveOverheadText();
-        t.text = text;
-        t.color = color;
-        t.blink = blink;
-        t.size = size;
-        t.position = position;
-        t.remainingTicks = Math.max(1, duration);
-        t.visiblePhase = true;
-        t.blinkInterval = 1;
-        t.blinkCounter = 0;
-        t.bold = bold;
-        t.italic = italic;
-        t.underline = underline;
-        t.ruleId = ruleId;
-        overheadTexts.add(t);
-    }
-
-    public List<KPWebhookPreset> getRules() { return new ArrayList<>(rules); }
-    public KPWebhookPreset find(int id) { return rules.stream().filter(r -> r.getId()==id).findFirst().orElse(null); }
-    public void addRule(KPWebhookPreset rule) { rule.setId(nextId++); rules.add(rule); savePreset(rule); refreshPanelTable(); }
-    public void updateRule(KPWebhookPreset rule) { savePreset(rule); refreshPanelTable(); }
-    private void cleanupTickArtifacts(int ruleId) {
-        try { highlightManager.removePersistentByRule(ruleId); } catch (Exception ignored) {}
-        if (overheadTexts != null && !overheadTexts.isEmpty()) {
-            String prefix1 = "RULE_" + ruleId + "_";
-            String prefix2 = "PERSIST_" + ruleId + "_"; // also clear persistent duration=0 texts on removal
-            overheadTexts.removeIf(t -> t.getKey() != null && (t.getKey().startsWith(prefix1) || t.getKey().startsWith(prefix2)) || t.ruleId==ruleId);
-        }
-    }
-    private void cleanupTickArtifactsLegacy(int ruleId) {
-        try { highlightManager.removePersistentByRule(ruleId); } catch (Exception ignored) {}
-        if (overheadTexts != null && !overheadTexts.isEmpty()) {
-            String prefix1 = "RULE_" + ruleId + "_";
-            String prefix2 = "PERSIST_" + ruleId + "_"; // also clear persistent duration=0 texts on removal
-            overheadTexts.removeIf(t -> t.getKey() != null && (t.getKey().startsWith(prefix1) || t.getKey().startsWith(prefix2)));
-        }
-    }
-    public void deleteRule(int id) {
-        KPWebhookPreset r = find(id);
-        if (r!=null) {
-            if (r.getTriggerType() == KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
-            else if (r.getTriggerType() == KPWebhookPreset.TriggerType.STAT) { // ensure STAT visuals cleared
-                removePersistentOverheadsForRule(r.getId());
-                removeOverheadsForRule(r.getId(), true);
-                try { highlightManager.removePersistentByRule(r.getId()); } catch (Exception ignored) {}
-            }
-            rules.remove(r); storage.delete(r); refreshPanelTable();
-        }
-    }
-    public void toggleActive(int id) {
-        KPWebhookPreset r = find(id);
-        if (r!=null) {
-            boolean wasActive = r.isActive();
-            r.setActive(!r.isActive());
-            if (wasActive && !r.isActive()) {
-                if (r.getTriggerType()== KPWebhookPreset.TriggerType.TICK) cleanupTickArtifacts(r.getId());
-                if (r.getTriggerType()== KPWebhookPreset.TriggerType.STAT) {
-                    removePersistentOverheadsForRule(r.getId());
-                    removeOverheadsForRule(r.getId(), true);
-                    try { highlightManager.removePersistentByRule(r.getId()); } catch (Exception ignored) {}
-                }
-            }
-            savePreset(r);
-        }
-    }
-    public void addOrUpdate(KPWebhookPreset preset) {
-        if (preset == null) return;
-        if (preset.getId() >= 0) {
-            KPWebhookPreset existing = find(preset.getId());
-            if (existing != null) {
-                boolean tickToInactive = existing.getTriggerType()== KPWebhookPreset.TriggerType.TICK && existing.isActive() && (!preset.isActive() || preset.getTriggerType()!= KPWebhookPreset.TriggerType.TICK);
-                String prevTitle = existing.getTitle();
-                for (int i=0;i<rules.size();i++) if (rules.get(i).getId()==existing.getId()) { rules.set(i, preset); break; }
-                storage.save(preset, prevTitle);
-                if (tickToInactive) cleanupTickArtifacts(preset.getId());
-                refreshPanelTable();
-                return;
-            }
-        }
-        if (preset.getId() < 0) preset.setId(nextId++); else if (preset.getId() >= nextId) nextId = preset.getId()+1;
-        rules.add(preset);
-        storage.save(preset, null);
-        refreshPanelTable();
-    }
-    public void refreshPanelTable() { if (panel != null) SwingUtilities.invokeLater(() -> panel.refreshTable()); }
-    private void savePreset(KPWebhookPreset rule) { storage.save(rule, null); }
-    private void saveAllPresets() { for (KPWebhookPreset r : rules) storage.save(r, null); }
-
-    private void sendImageToWebhook(BufferedImage image, String webhook, String message)
-    {
-        if (image == null || webhook == null || webhook.isBlank()) return;
-        lastScreenshotRequestMs = System.currentTimeMillis(); // mark send moment
-
-        log.info("📤 Sending image to webhook: {}x{} pixels, size: ~{} KB",
-                image.getWidth(), image.getHeight(),
-                (image.getWidth() * image.getHeight() * 3) / 1024);
-
-        executorService.execute(() -> {
-            try {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(image, "png", baos);
-                byte[] data = baos.toByteArray();
-
-                log.info("📁 PNG file size: {} KB", data.length / 1024);
-
-                MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM)
-                        .addFormDataPart("file", "screenshot.png", RequestBody.create(PNG, data));
-                if (message != null && !message.isBlank())
-                {
-                    String json = gson.toJson(Map.of("content", message));
-                    mb.addFormDataPart("payload_json", json);
-                }
-                Request request = new Request.Builder().url(webhook).post(mb.build()).build();
-                try (Response response = okHttpClient.newCall(request).execute())
-                {
-                    if (response.isSuccessful()) {
-                        log.info("✅ Image successfully sent to Discord! Response: {}", response.code());
-                    } else {
-                        log.warn("❌ Image webhook failed with HTTP {}: {}", response.code(), response.message());
-                    }
-                }
-            } catch (Exception e) {
-                log.error("💥 Error sending image to webhook: {}", e.getMessage(), e);
-            }
-        });
-    }
-    // === End restored methods ===
-
-    // Screenshot capture sequence (restored)
     private void captureAndSendSimpleScreenshot(String webhook, String message)
     {
         if (webhook == null || webhook.isBlank()) return;
         long now = System.currentTimeMillis();
         if (now - lastScreenshotRequestMs < SCREENSHOT_COOLDOWN_MS)
         { log.debug("Screenshot skipped due to cooldown ({} ms since last)", now - lastScreenshotRequestMs); return; }
-        // optimistic set to avoid race; will refresh on actual send
         lastScreenshotRequestMs = now;
-        if (tryRuneLiteScreenshot(webhook, message)) return;
+        // Prefer internal buffers first (works even when minimized) before canvas/robot.
         if (tryClientBufferedImage(webhook, message)) return;
-        BufferedImage cached = lastFrame;
-        if (cached != null && isImageValid(cached)) { sendImageToWebhook(copyBuffered(cached), webhook, message); return; }
-        if (tryRobotScreenshot(webhook, message)) return;
+        // Only attempt canvas / repaint path if canvas is visible (avoid black/minimized issues)
+        if (isCanvasVisible()) {
+            if (tryRuneLiteScreenshot(webhook, message)) return;
+            if (tryRobotScreenshot(webhook, message)) return; // last resort only when visible
+        }
+        // If still nothing, schedule fallback attempts to internal capture
         clientThread.invokeLater(() -> SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, 0)));
     }
 
@@ -1335,6 +1131,8 @@ public class KPWebhookPlugin extends Plugin
             try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
             try { ctx.put("STAT", String.valueOf(client.getRealSkillLevel(skill))); } catch (Exception ignored) { ctx.put("STAT", ""); }
             try { ctx.put("CURRENT_STAT", String.valueOf(client.getBoostedSkillLevel(skill))); } catch (Exception ignored) { ctx.put("CURRENT_STAT", ""); }
+            ctx.put("TARGET", getCurrentTargetName());
+            ctx.put("$TARGET", getCurrentTargetName());
             for (Skill s : Skill.values()) {
                 try {
                     int real = client.getRealSkillLevel(s);
@@ -1367,7 +1165,7 @@ public class KPWebhookPlugin extends Plugin
      * @param includePersistent if true, also remove persistent (duration=0) texts; if false keep persistent ones
      */
     private void removeOverheadsForRule(int ruleId, boolean includePersistent) {
-        if (overheadTexts == null || overheadTexts.isEmpty()) return;
+        if (overheadTexts.isEmpty()) return;
         final String prefixRule = "RULE_" + ruleId + "_"; // used by tick-generated keyed texts
         final String prefixPersist = "PERSIST_" + ruleId + "_"; // persistent keyed texts
         overheadTexts.removeIf(t -> {
@@ -1386,8 +1184,282 @@ public class KPWebhookPlugin extends Plugin
      * Remove only persistent overhead texts (duration=0) for a rule.
      */
     private void removePersistentOverheadsForRule(int ruleId) {
-        if (overheadTexts == null || overheadTexts.isEmpty()) return;
+        if (overheadTexts.isEmpty()) return;
         final String prefixPersist = "PERSIST_" + ruleId + "_";
         overheadTexts.removeIf(t -> t != null && t.persistent && (t.ruleId == ruleId || (t.key != null && t.key.startsWith(prefixPersist))));
+    }
+
+    // Added: utility to refresh panel safely (fix missing symbol)
+    private void refreshPanelTable() {
+        if (panel == null) return;
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                panel.refreshTable();
+            } else {
+                SwingUtilities.invokeLater(() -> {
+                    try { panel.refreshTable(); } catch (Exception ignored) {}
+                });
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /* ================= Rule CRUD & Persistence (restored) ================= */
+    public List<KPWebhookPreset> getRules() { return Collections.unmodifiableList(rules); }
+
+    public synchronized void addOrUpdate(KPWebhookPreset preset) {
+        if (preset == null) return;
+        KPWebhookPreset existing = preset.getId() >= 0 ? find(preset.getId()) : null;
+        String previousTitle = null;
+        if (existing == null) {
+            // assign new id
+            if (preset.getId() < 0) {
+                preset.setId(nextId++);
+            } else if (preset.getId() >= nextId) {
+                nextId = preset.getId() + 1; // keep monotonic
+            }
+            rules.add(preset);
+        } else {
+            previousTitle = existing.getTitle();
+            int idx = rules.indexOf(existing);
+            rules.set(idx, preset);
+        }
+        savePreset(preset, previousTitle);
+        refreshPanelTable();
+    }
+
+    public synchronized void toggleActive(int id) {
+        KPWebhookPreset r = find(id);
+        if (r == null) return;
+        r.setActive(!r.isActive());
+        savePreset(r);
+    }
+
+    public synchronized void deleteRule(int id) {
+        KPWebhookPreset r = find(id);
+        if (r == null) return;
+        rules.remove(r);
+        if (storage != null) storage.delete(r);
+        // Also stop any visuals / sequences for this rule
+        stopRule(id);
+        refreshPanelTable();
+    }
+
+    private void savePreset(KPWebhookPreset p) { savePreset(p, null); }
+    private void savePreset(KPWebhookPreset p, String previousTitle) {
+        if (storage == null || p == null) return;
+        try { storage.save(p, previousTitle); } catch (Exception e) { log.warn("Save failed", e); }
+    }
+    private void saveAllPresets() {
+        if (storage == null) return;
+        for (KPWebhookPreset p : rules) savePreset(p);
+    }
+
+    public KPWebhookPreset find(int id) {
+        for (KPWebhookPreset r : rules) if (r.getId() == id) return r; return null;
+    }
+
+    private void cancelSequencesForRule(int ruleId) {
+        if (activeSequences.isEmpty()) return;
+        activeSequences.removeIf(seq -> seq != null && seq.rule != null && seq.rule.getId() == ruleId);
+    }
+
+    /* ================= Overhead Text Helpers (simplified restoration) ================= */
+    private void addOverheadTextFromPreset(String text, String position, KPWebhookPreset rule) {
+        if (text == null || text.isBlank() || rule == null) return;
+        ActiveOverheadText ot = new ActiveOverheadText();
+        ot.text = text;
+        ot.position = position;
+        ot.ruleId = rule.getId();
+        boolean persistent = false;
+        int duration = 80; // default fallback
+        String colorHex = "#FFFFFF";
+        boolean blink = false; int size = 16; boolean bold=false, italic=false, underline=false;
+        switch (position) {
+            case "Above":
+                colorHex = or(rule.getTextOverColor(), colorHex);
+                blink = safe(rule.getTextOverBlink());
+                size = nz(rule.getTextOverSize(), size);
+                duration = nz(rule.getTextOverDuration(), duration);
+                bold = safe(rule.getTextOverBold()); italic = safe(rule.getTextOverItalic()); underline = safe(rule.getTextOverUnderline());
+                break;
+            case "Under":
+                colorHex = or(rule.getTextUnderColor(), colorHex);
+                blink = safe(rule.getTextUnderBlink());
+                size = nz(rule.getTextUnderSize(), size);
+                duration = nz(rule.getTextUnderDuration(), duration);
+                bold = safe(rule.getTextUnderBold()); italic = safe(rule.getTextUnderItalic()); underline = safe(rule.getTextUnderUnderline());
+                break;
+            case "Center":
+                colorHex = or(rule.getTextCenterColor(), colorHex);
+                blink = safe(rule.getTextCenterBlink());
+                size = nz(rule.getTextCenterSize(), size);
+                duration = nz(rule.getTextCenterDuration(), duration);
+                bold = safe(rule.getTextCenterBold()); italic = safe(rule.getTextCenterItalic()); underline = safe(rule.getTextCenterUnderline());
+                break;
+        }
+        if (duration <= 0) { persistent = true; duration = 0; }
+        ot.persistent = persistent;
+        ot.remainingTicks = duration;
+        ot.color = parseColor(colorHex, Color.WHITE);
+        ot.blink = blink;
+        ot.blinkInterval = 2;
+        ot.size = size;
+        ot.bold = bold; ot.italic = italic; ot.underline = underline;
+        ot.visiblePhase = true;
+        overheadTexts.add(ot);
+    }
+
+    private void handleTargetedTextCommand(KPWebhookPreset rule, String line, Map<String,String> ctx) {
+        // Supports TEXT_OVER / TEXT_UNDER / TEXT_CENTER followed by text and optional formatting tokens
+        String raw = line.trim();
+        String pos = null; java.util.regex.Matcher m;
+        if ((m = P_TEXT_OVER.matcher(raw)).find()) pos = "Above"; else if ((m = P_TEXT_UNDER.matcher(raw)).find()) pos = "Under"; else if ((m = P_TEXT_CENTER.matcher(raw)).find()) pos = "Center";
+        if (pos == null) return;
+        String content = m.group(1).trim();
+        // Extract formatting tokens (SIZE=, COLOR=, BLINK, BOLD, ITALIC, UNDERLINE)
+        boolean blink=false,bold=false,italic=false,underline=false; int size=-1; Color color=null;
+        java.util.List<String> tokens = new ArrayList<>(Arrays.asList(content.split("\\s+")));
+        Iterator<String> it = tokens.iterator();
+        StringBuilder textBuilder = new StringBuilder();
+        while (it.hasNext()) {
+            String t = it.next();
+            String tu = t.toUpperCase(Locale.ROOT);
+            if (tu.startsWith("SIZE=")) { try { size = Integer.parseInt(t.substring(5)); } catch (Exception ignored) {} continue; }
+            if (tu.startsWith("COLOR=")) { color = parseColor(t.substring(6), null); continue; }
+            if (tu.equals("BLINK")) { blink = true; continue; }
+            if (tu.equals("BOLD")) { bold = true; continue; }
+            if (tu.equals("ITALIC")) { italic = true; continue; }
+            if (tu.equals("UNDERLINE")) { underline = true; continue; }
+            textBuilder.append(t).append(' ');
+        }
+        String finalText = expand(textBuilder.toString().trim(), ctx);
+        if (finalText.isBlank()) return;
+        ActiveOverheadText ot = new ActiveOverheadText();
+        ot.text = finalText; ot.position = pos; ot.ruleId = rule!=null?rule.getId():-1;
+        // Defaults from rule per position (inherit + allow token overrides)
+        switch (pos) {
+            case "Above":
+                ot.size = size>0?size:nz(rule.getTextOverSize(),16);
+                ot.color = color!=null?color:parseColor(rule.getTextOverColor(),Color.WHITE);
+                ot.remainingTicks = nz(rule.getTextOverDuration(),80);
+                ot.bold = bold||safe(rule.getTextOverBold());
+                ot.italic = italic||safe(rule.getTextOverItalic());
+                ot.underline = underline||safe(rule.getTextOverUnderline());
+                ot.blink = blink || safe(rule.getTextOverBlink());
+                break;
+            case "Under":
+                ot.size = size>0?size:nz(rule.getTextUnderSize(),16);
+                ot.color = color!=null?color:parseColor(rule.getTextUnderColor(),Color.WHITE);
+                ot.remainingTicks = nz(rule.getTextUnderDuration(),80);
+                ot.bold = bold||safe(rule.getTextUnderBold());
+                ot.italic = italic||safe(rule.getTextUnderItalic());
+                ot.underline = underline||safe(rule.getTextUnderUnderline());
+                ot.blink = blink || safe(rule.getTextUnderBlink());
+                break;
+            case "Center":
+                ot.size = size>0?size:nz(rule.getTextCenterSize(),16);
+                ot.color = color!=null?color:parseColor(rule.getTextCenterColor(),Color.WHITE);
+                ot.remainingTicks = nz(rule.getTextCenterDuration(),80);
+                ot.bold = bold||safe(rule.getTextCenterBold());
+                ot.italic = italic||safe(rule.getTextCenterItalic());
+                ot.underline = underline||safe(rule.getTextCenterUnderline());
+                ot.blink = blink || safe(rule.getTextCenterBlink());
+                break;
+        }
+        if (ot.remainingTicks <=0) { ot.persistent = true; ot.remainingTicks = 0; }
+        ot.blinkInterval = ot.blink ? 2 : 0; // only used when blinking
+        ot.visiblePhase = true; ot.blinkCounter = 0;
+        overheadTexts.add(ot);
+    }
+
+    private boolean isCanvasVisible() {
+        try {
+            Canvas canvas = client.getCanvas();
+            if (canvas == null) return false;
+            if (!canvas.isShowing()) return false;
+            Window w = SwingUtilities.getWindowAncestor(canvas);
+            return w != null && w.isVisible();
+        } catch (Exception e) { return false; }
+    }
+
+    private void sendImageToWebhook(BufferedImage img, String webhook, String message) {
+        if (img == null || webhook == null || webhook.isBlank()) return;
+        executorService.execute(() -> {
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(img, "png", baos);
+                byte[] png = baos.toByteArray();
+                MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM)
+                        .addFormDataPart("content", message==null?"":message)
+                        .addFormDataPart("file", "screenshot.png", RequestBody.create(PNG, png));
+                Request req = new Request.Builder().url(webhook).post(mb.build()).build();
+                try (Response resp = okHttpClient.newCall(req).execute()) {
+                    if (!resp.isSuccessful()) log.warn("Screenshot webhook failed {}", resp.code());
+                }
+            } catch (Exception e) { log.warn("Failed sending screenshot", e); }
+        });
+    }
+
+    /* ================= Utility helpers ================= */
+    private String or(String v, String def) { return v==null||v.isBlank()?def:v; }
+    private boolean safe(Boolean b){ return b!=null && b; }
+    private int nz(Integer v, int def){ return v==null?def:v; }
+    private Color parseColor(String hex, Color def) {
+        if (hex == null) return def;
+        String h = hex.trim();
+        if (h.startsWith("#")) h = h.substring(1);
+        if (h.length()==6) {
+            try { int rgb = Integer.parseInt(h,16); return new Color(rgb); } catch (Exception ignored) {}
+        }
+        return def;
+    }
+
+    // == Public API for simple TEXT_OVER / TEXT_UNDER / TEXT_CENTER command helpers ==
+    public void addOverheadText(KPWebhookPreset rule, String text, String position) {
+        if (text == null || text.isBlank()) return;
+        String pos = position==null?"Above":position; // default Above
+        ActiveOverheadText t = new ActiveOverheadText();
+        t.text = text.trim();
+        t.position = pos;
+        t.ruleId = rule!=null? rule.getId() : -1;
+        // If rule provided, try inherit style; else defaults
+        if (rule != null) {
+            switch (pos) {
+                case "Above":
+                    t.color = parseColor(or(rule.getTextOverColor(), "#FFFFFF"), Color.WHITE);
+                    t.size = nz(rule.getTextOverSize(),16);
+                    t.remainingTicks = nz(rule.getTextOverDuration(),80);
+                    t.bold = safe(rule.getTextOverBold());
+                    t.italic = safe(rule.getTextOverItalic());
+                    t.underline = safe(rule.getTextOverUnderline());
+                    t.blink = safe(rule.getTextOverBlink());
+                    break;
+                case "Under":
+                    t.color = parseColor(or(rule.getTextUnderColor(), "#FFFFFF"), Color.WHITE);
+                    t.size = nz(rule.getTextUnderSize(),16);
+                    t.remainingTicks = nz(rule.getTextUnderDuration(),80);
+                    t.bold = safe(rule.getTextUnderBold());
+                    t.italic = safe(rule.getTextUnderItalic());
+                    t.underline = safe(rule.getTextUnderUnderline());
+                    t.blink = safe(rule.getTextUnderBlink());
+                    break;
+                case "Center":
+                    t.color = parseColor(or(rule.getTextCenterColor(), "#FFFFFF"), Color.WHITE);
+                    t.size = nz(rule.getTextCenterSize(),16);
+                    t.remainingTicks = nz(rule.getTextCenterDuration(),80);
+                    t.bold = safe(rule.getTextCenterBold());
+                    t.italic = safe(rule.getTextCenterItalic());
+                    t.underline = safe(rule.getTextCenterUnderline());
+                    t.blink = safe(rule.getTextCenterBlink());
+                    break;
+                default:
+                    t.color = Color.WHITE; t.size = 16; t.remainingTicks = 80; break;
+            }
+        } else {
+            t.color = Color.WHITE; t.size = 16; t.remainingTicks = 80; t.bold = false; t.italic = false; t.underline = false; t.blink = false;
+        }
+        if (t.remainingTicks <= 0) { t.persistent = true; t.remainingTicks = 0; }
+        t.blinkInterval = 2; t.visiblePhase = true;
+        overheadTexts.add(t);
     }
 }

@@ -20,10 +20,12 @@ public class KPWebhookPreset
         NPC_SPAWN, // new
         NPC_DESPAWN, // new
         ANIMATION_SELF,
+        ANIMATION_TARGET, // new target animation trigger
         MESSAGE,
         VARBIT,
         VARPLAYER,
-        TICK // new continuous trigger
+        TICK, // new continuous trigger
+        TARGET // current combat target changed / expired
     }
 
     public enum StatMode
@@ -289,6 +291,13 @@ public class KPWebhookPreset
                 }
                 String src = npcConfig.getRawList()!=null? npcConfig.getRawList():"";
                 return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN ":"NPC_DESPAWN ") + (src.length()>30? src.substring(0,27)+"...":src);
+            case TARGET:
+                return "TARGET (current)";
+            case ANIMATION_TARGET:
+                if (animationConfig == null || animationConfig.getAnimationId() == null) {
+                    return "ANIMATION_TARGET ?";
+                }
+                return "ANIMATION_TARGET " + animationConfig.getAnimationId();
             default:
                 // fall back to existing switch below
                 break;
@@ -399,6 +408,10 @@ public class KPWebhookPreset
             case NPC_DESPAWN:
                 // already handled above, keep default fallback
                 return "NPC";
+            case TARGET:
+                return "TARGET (current)";
+            case ANIMATION_TARGET:
+                return "ANIMATION_TARGET";
             default:
                 return "?";
         }

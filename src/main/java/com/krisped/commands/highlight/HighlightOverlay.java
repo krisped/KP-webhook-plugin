@@ -3,6 +3,8 @@ package com.krisped.commands.highlight;
 import com.krisped.KPWebhookPlugin;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
+import net.runelite.api.NPC;
+import net.runelite.api.Actor;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.Perspective;
 import net.runelite.client.ui.FontManager;
@@ -14,6 +16,9 @@ import net.runelite.client.ui.overlay.outline.ModelOutlineRenderer;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.*;
+import java.lang.reflect.Method;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 /** Overlay responsible for rendering active highlights and overhead texts. */
@@ -45,35 +50,34 @@ public class HighlightOverlay extends Overlay {
 
         List<ActiveHighlight> active = highlightManager.getActiveHighlights();
         if (!active.isEmpty()) {
+            Collection<Player> players = enumeratePlayers();
+            Collection<NPC> npcs = enumerateNpcs();
             for (ActiveHighlight h : active) {
                 if (!h.isVisiblePhase()) continue;
-                switch (h.getType()) {
-                    case OUTLINE:
-                        int thinWidth = Math.max(1, Math.min(2, h.getWidth())); // cap to 1-2px
-                        modelOutlineRenderer.drawOutline(local, thinWidth, h.getColor(), 1); // smaller feather
-                        break;
-                    case TILE: {
-                        LocalPoint lp = local.getLocalLocation();
-                        if (lp == null) break;
-                        Polygon poly = Perspective.getCanvasTilePoly(client, lp);
-                        if (poly != null) {
-                            graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
-                            graphics.setColor(h.getColor());
-                            graphics.draw(poly);
+                if (h.getTargetType() == ActiveHighlight.TargetType.LOCAL_PLAYER || h.getTargetType()==null) {
+                    renderHighlightFor(graphics, h, local);
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.PLAYER_NAME) {
+                    for (Player p : players) {
+                        if (p==null || p.getName()==null) continue;
+                        String n = p.getName().replace('_',' ').trim().toLowerCase();
+                        if (h.getTargetNames()!=null && h.getTargetNames().contains(n)) {
+                            renderHighlightFor(graphics, h, p);
                         }
-                        break;
                     }
-                    case HULL: {
-                        Shape hull = local.getConvexHull();
-                        if (hull != null) {
-                            graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
-                            graphics.setColor(h.getColor());
-                            graphics.draw(hull);
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.NPC_NAME || h.getTargetType()== ActiveHighlight.TargetType.NPC_ID) {
+                    for (NPC npc : npcs) {
+                        if (npc==null) continue;
+                        if (h.getTargetType()== ActiveHighlight.TargetType.NPC_ID) {
+                            if (h.getTargetIds()!=null && h.getTargetIds().contains(npc.getId())) {
+                                renderHighlightFor(graphics, h, npc);
+                            }
+                        } else {
+                            String n = npc.getName(); if (n!=null) { n = n.replace('_',' ').trim().toLowerCase(); }
+                            if (n!=null && h.getTargetNames()!=null && h.getTargetNames().contains(n)) {
+                                renderHighlightFor(graphics, h, npc);
+                            }
                         }
-                        break;
                     }
-                    case MINIMAP: // handled in separate overlay
-                        break;
                 }
             }
         }
@@ -81,33 +85,142 @@ public class HighlightOverlay extends Overlay {
         // Overhead texts (also below widgets now)
         java.util.List<KPWebhookPlugin.ActiveOverheadText> texts = plugin.getOverheadTexts();
         if (!texts.isEmpty()) {
-            LocalPoint lp = local.getLocalLocation();
-            if (lp != null) {
-                int logical = local.getLogicalHeight();
-                for (KPWebhookPlugin.ActiveOverheadText aot : texts) {
-                    if (!aot.isVisiblePhase()) continue;
-                    int zOffset;
-                    switch (aot.getPosition()) {
-                        case "Above": zOffset = logical + 50; break;
-                        case "Center": zOffset = logical / 2; break;
-                        case "Under": default: zOffset = 10; break;
+            Collection<Player> players = enumeratePlayers();
+            Collection<NPC> npcs = enumerateNpcs();
+            for (KPWebhookPlugin.ActiveOverheadText aot : texts) {
+                if (!aot.isVisiblePhase()) continue;
+                if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.LOCAL_PLAYER || aot.getTargetType()==null) {
+                    drawTextOverEntity(graphics, local, aot);
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.PLAYER_NAME) {
+                    for (Player p : players) {
+                        if (p==null||p.getName()==null) continue;
+                        String n = p.getName().replace('_',' ').trim().toLowerCase();
+                        if (aot.getTargetNames()!=null && aot.getTargetNames().contains(n)) drawTextOverEntity(graphics, p, aot);
                     }
-                    net.runelite.api.Point p = Perspective.getCanvasTextLocation(client, graphics, lp, aot.getText(), zOffset);
-                    if (p != null) {
-                        int style = Font.PLAIN;
-                        if (aot.isBold()) style |= Font.BOLD;
-                        if (aot.isItalic()) style |= Font.ITALIC;
-                        Font base = FontManager.getRunescapeBoldFont();
-                        Font use = base.deriveFont(style, (float) aot.getSize());
-                        Font old = graphics.getFont();
-                        graphics.setFont(use);
-                        drawStyledOutlinedString(graphics, aot.getText(), p.getX(), p.getY(), aot.getColor(), aot.isUnderline());
-                        graphics.setFont(old);
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.NPC_ID || aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.NPC_NAME) {
+                    for (NPC npc : npcs) {
+                        if (npc==null) continue;
+                        if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.NPC_ID) {
+                            if (aot.getTargetIds()!=null && aot.getTargetIds().contains(npc.getId())) drawTextOverEntity(graphics, npc, aot);
+                        } else {
+                            String n = npc.getName(); if (n!=null){ n=n.replace('_',' ').trim().toLowerCase(); }
+                            if (n!=null && aot.getTargetNames()!=null && aot.getTargetNames().contains(n)) drawTextOverEntity(graphics, npc, aot);
+                        }
                     }
                 }
             }
         }
         return null;
+    }
+
+    private void renderHighlightFor(Graphics2D graphics, ActiveHighlight h, Player p) {
+        switch (h.getType()) {
+            case OUTLINE:
+                int thinWidth = Math.max(1, Math.min(2, h.getWidth()));
+                modelOutlineRenderer.drawOutline(p, thinWidth, h.getColor(), 1);
+                break;
+            case TILE: {
+                LocalPoint lp = p.getLocalLocation(); if (lp == null) break;
+                Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                if (poly != null) {
+                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                    graphics.setColor(h.getColor());
+                    graphics.draw(poly);
+                }
+                break; }
+            case HULL: {
+                Shape hull = p.getConvexHull();
+                if (hull != null) {
+                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                    graphics.setColor(h.getColor());
+                    graphics.draw(hull);
+                }
+                break; }
+            case MINIMAP:
+                // ignored here
+                break;
+        }
+    }
+    private void renderHighlightFor(Graphics2D graphics, ActiveHighlight h, NPC npc) {
+        switch (h.getType()) {
+            case OUTLINE:
+                int thinWidth = Math.max(1, Math.min(2, h.getWidth()));
+                modelOutlineRenderer.drawOutline(npc, thinWidth, h.getColor(), 1);
+                break;
+            case TILE: {
+                LocalPoint lp = npc.getLocalLocation(); if (lp == null) break;
+                Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                if (poly != null) {
+                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                    graphics.setColor(h.getColor());
+                    graphics.draw(poly);
+                }
+                break; }
+            case HULL: {
+                Shape hull = npc.getConvexHull();
+                if (hull != null) {
+                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                    graphics.setColor(h.getColor());
+                    graphics.draw(hull);
+                }
+                break; }
+            case MINIMAP:
+                break;
+        }
+    }
+
+    private void drawTextOverEntity(Graphics2D graphics, Actor actor, KPWebhookPlugin.ActiveOverheadText aot) {
+        if (actor == null) return;
+        // Derive font first (needed for metrics when we use hull-based placement)
+        int style = Font.PLAIN;
+        if (aot.isBold()) style |= Font.BOLD;
+        if (aot.isItalic()) style |= Font.ITALIC;
+        Font base = FontManager.getRunescapeBoldFont();
+        Font use = base.deriveFont(style, (float) aot.getSize());
+        Font old = graphics.getFont();
+        graphics.setFont(use);
+        FontMetrics fm = graphics.getFontMetrics();
+        Shape hull = actor.getConvexHull();
+        if (hull != null) {
+            Rectangle b = hull.getBounds();
+            int xCenter = b.x + b.width / 2;
+            int textWidth = fm.stringWidth(aot.getText());
+            int ascent = fm.getAscent();
+            int drawX = xCenter - textWidth / 2;
+            int drawY;
+            switch (aot.getPosition()) {
+                case "Above":
+                    // Slightly above top of model
+                    drawY = b.y - 4; // move a few pixels above
+                    break;
+                case "Center":
+                    // Vertically centered in model hull
+                    drawY = b.y + (b.height / 2) + (ascent / 2);
+                    break;
+                case "Under":
+                default:
+                    // Just below the base of the model
+                    drawY = b.y + b.height + ascent;
+                    break;
+            }
+            drawStyledOutlinedString(graphics, aot.getText(), drawX, drawY, aot.getColor(), aot.isUnderline());
+            graphics.setFont(old);
+            return;
+        }
+        // Fallback to original projection method if hull unavailable
+        LocalPoint lp = actor.getLocalLocation(); if (lp==null) { graphics.setFont(old); return; }
+        int logical = actor.getLogicalHeight();
+        int zOffset;
+        switch (aot.getPosition()) {
+            case "Above": zOffset = logical + 20; break;
+            case "Center": zOffset = logical / 2; break;
+            case "Under": default: zOffset = 0; break;
+        }
+        net.runelite.api.Point p = Perspective.getCanvasTextLocation(client, graphics, lp, aot.getText(), zOffset);
+        if (p != null) {
+            drawStyledOutlinedString(graphics, aot.getText(), p.getX(), p.getY(), aot.getColor(), aot.isUnderline());
+        }
+        graphics.setFont(old);
     }
 
     private void drawOutlinedString(Graphics2D g, String s, int x, int y, Color color) {
@@ -131,5 +244,35 @@ public class HighlightOverlay extends Overlay {
             g.setColor(color);
             g.drawLine(x, underlineY, x+w, underlineY);
         }
+    }
+
+    // Reflection-based world view enumeration (fallback to deprecated methods if necessary)
+    private Collection<Player> enumeratePlayers() {
+        try {
+            Method m = client.getClass().getMethod("getTopLevelWorldView");
+            Object wv = m.invoke(client);
+            if (wv != null) {
+                Method mp = wv.getClass().getMethod("getPlayers");
+                Object result = mp.invoke(wv);
+                if (result instanceof Collection) {
+                    @SuppressWarnings("unchecked") Collection<Player> players = (Collection<Player>) result; return players;
+                }
+            }
+        } catch (Exception ignored) {}
+        try { return client.getPlayers(); } catch (Exception e) { return Collections.emptyList(); }
+    }
+    private Collection<NPC> enumerateNpcs() {
+        try {
+            Method m = client.getClass().getMethod("getTopLevelWorldView");
+            Object wv = m.invoke(client);
+            if (wv != null) {
+                Method mp = wv.getClass().getMethod("getNpcs");
+                Object result = mp.invoke(wv);
+                if (result instanceof Collection) {
+                    @SuppressWarnings("unchecked") Collection<NPC> npcs = (Collection<NPC>) result; return npcs;
+                }
+            }
+        } catch (Exception ignored) {}
+        try { return client.getNpcs(); } catch (Exception e) { return Collections.emptyList(); }
     }
 }

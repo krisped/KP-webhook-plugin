@@ -96,22 +96,22 @@ public class KPWebhookPresetDialog extends JDialog
 
     /* Default commands */
     private static final String DEFAULT_COMMANDS_TEXT =
-            "# Available commands:\n" +
-            "#  NOTIFY <text>            - In-game notification\n" +
-            "#  WEBHOOK <text>          - Send to Discord/webhook\n" +
-            "#  SCREENSHOT [text]        - Capture client area & upload (optional caption)\n" +
+            "# Available commands (alphabetical):\n" +
+            "#  HIGHLIGHT_HULL            - Hull highlight (player)\n" +
+            "#  HIGHLIGHT_MINIMAP        - Minimap marker (reserved)\n" +
             "#  HIGHLIGHT_OUTLINE        - Outline local player\n" +
             "#  HIGHLIGHT_TILE           - Highlight tile under local player\n" +
-            "#  HIGHLIGHT_HULL           - Hull highlight (player)\n" +
-            "#  HIGHLIGHT_MINIMAP        - Minimap marker (reserved)\n" +
-            "#  TEXT_OVER <text>         - Text above player\n" +
-            "#  TEXT_CENTER <text>       - Text centered on player\n" +
-            "#  TEXT_UNDER <text>        - Text under feet\n" +
+            "#  INFOBOX <id> [message]   - Show icon with optional custom tooltip text\n" +
+            "#  NOTIFY <text>            - In-game notification\n" +
             "#  OVERLAY_TEXT <text>      - Screen overlay box (top center)\n" +
-            "#  INFOBOX <id> [message]     Show icon with optional custom tooltip text\n" +
+            "#  SCREENSHOT [text]        - Capture client area & upload (optional caption)\n" +
             "#  SLEEP <ms>               - Millisecond delay in sequence\n" +
-            "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
             "#  STOP                     - Stop all active sequences\n" +
+            "#  TEXT_CENTER <text>       - Text centered on player\n" +
+            "#  TEXT_OVER <text>         - Text above player\n" +
+            "#  TEXT_UNDER <text>        - Text under feet\n" +
+            "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
+            "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
             "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n" +
             "\n" +
             "NOTIFY You gained a level in {{stat}}\n" +
@@ -317,20 +317,26 @@ public class KPWebhookPresetDialog extends JDialog
         hlHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
         hlHeader.setBorder(new EmptyBorder(4,2,2,2));
         settingsRoot.add(hlHeader);
-        settingsRoot.add(new CollapsibleSection(outlinePanel));
-        settingsRoot.add(new CollapsibleSection(tilePanel));
-        settingsRoot.add(new CollapsibleSection(minimapPanel));
-        settingsRoot.add(new CollapsibleSection(hullPanel));
+        java.util.List<CollapsibleSection> hlSections = new java.util.ArrayList<>();
+        hlSections.add(new CollapsibleSection(hullPanel));
+        hlSections.add(new CollapsibleSection(minimapPanel));
+        hlSections.add(new CollapsibleSection(outlinePanel));
+        hlSections.add(new CollapsibleSection(tilePanel));
+        hlSections.sort((a,b)-> a.header.getText().compareToIgnoreCase(b.header.getText()));
+        for (CollapsibleSection cs : hlSections) settingsRoot.add(cs);
         settingsRoot.add(Box.createVerticalStrut(6));
         // Text group header
         JLabel txtHeader = new JLabel("Text");
         txtHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
         txtHeader.setBorder(new EmptyBorder(4,2,2,2));
         settingsRoot.add(txtHeader);
-        settingsRoot.add(new CollapsibleSection(textUnderPanel));
-        settingsRoot.add(new CollapsibleSection(textOverPanel));
-        settingsRoot.add(new CollapsibleSection(textCenterPanel));
-        settingsRoot.add(new CollapsibleSection(overlayTextPanel));
+        java.util.List<CollapsibleSection> textSections = new java.util.ArrayList<>();
+        textSections.add(new CollapsibleSection(overlayTextPanel));
+        textSections.add(new CollapsibleSection(textCenterPanel));
+        textSections.add(new CollapsibleSection(textOverPanel));
+        textSections.add(new CollapsibleSection(textUnderPanel));
+        textSections.sort((a,b)-> a.header.getText().compareToIgnoreCase(b.header.getText()));
+        for (CollapsibleSection cs : textSections) settingsRoot.add(cs);
         settingsRoot.add(Box.createVerticalStrut(6));
         JLabel ibHeader = new JLabel("Infobox");
         ibHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
@@ -370,54 +376,71 @@ public class KPWebhookPresetDialog extends JDialog
     }
 
     private String buildInfoHtml() {
-        StringBuilder skills = new StringBuilder();
-        for (Skill s : Skill.values()) {
-            if (skills.length()>0) skills.append(", ");
-            skills.append(s.name());
-        }
-        String skillTokens = skills.toString();
+        // Build skill token list (alphabetical)
+        java.util.List<String> skillList = new java.util.ArrayList<>();
+        for (Skill s : Skill.values()) skillList.add(s.name());
+        java.util.Collections.sort(skillList, String.CASE_INSENSITIVE_ORDER);
+        String skillTokens = String.join(", ", skillList);
+        // Trigger descriptions mapping
+        java.util.Map<String,String> triggerDesc = new java.util.HashMap<>();
+        triggerDesc.put("ANIMATION_SELF","Local player animation id");
+        triggerDesc.put("ANIMATION_TARGET","Current target animation id");
+        triggerDesc.put("MANUAL","Manual trigger");
+        triggerDesc.put("MESSAGE","Chat message filter");
+        triggerDesc.put("NPC_DESPAWN","NPC despawn – filter via list (id or name)");
+        triggerDesc.put("NPC_SPAWN","NPC spawn – filter via list (id or name)");
+        triggerDesc.put("PLAYER_DESPAWN","Player leaves area");
+        triggerDesc.put("PLAYER_SPAWN","Player enters area");
+        triggerDesc.put("STAT","Skill LEVEL_UP / ABOVE / BELOW");
+        triggerDesc.put("TICK","Every tick (light visuals only)");
+        triggerDesc.put("TARGET","Current combat target (changes / expiry)");
+        triggerDesc.put("VARBIT","Varbit changes to specific value");
+        triggerDesc.put("VARPLAYER","Varplayer changes to specific value");
+        triggerDesc.put("WIDGET","Widget group[:child] loaded");
+        java.util.List<String> triggerNames = new java.util.ArrayList<>(triggerDesc.keySet());
+        java.util.Collections.sort(triggerNames, String.CASE_INSENSITIVE_ORDER);
+        StringBuilder triggerHtml = new StringBuilder();
+        for (String n : triggerNames) triggerHtml.append(li(n, triggerDesc.get(n)));
+        // Command descriptions mapping
+        java.util.Map<String,String> cmdDesc = new java.util.HashMap<>();
+        cmdDesc.put("HIGHLIGHT_*","Outline/Tile/Hull/Minimap (<=0 persistent)");
+        cmdDesc.put("INFOBOX <id> [tt]","Info box icon(s)");
+        cmdDesc.put("NOTIFY <text>","In-game chat message");
+        cmdDesc.put("OVERLAY_TEXT <text>","HUD overlay box");
+        cmdDesc.put("SCREENSHOT [text]","Send screenshot (optional caption)");
+        cmdDesc.put("SLEEP <ms>","Pause sequence ms");
+        cmdDesc.put("STOP","Stop all active sequences");
+        cmdDesc.put("TEXT_OVER|CENTER|UNDER","Overhead text (<=0 persistent) with optional target");
+        cmdDesc.put("TICK <n>","Delay n game ticks");
+        cmdDesc.put("WEBHOOK <text>","Send message to webhook");
+        java.util.List<String> cmdNames = new java.util.ArrayList<>(cmdDesc.keySet());
+        java.util.Collections.sort(cmdNames, String.CASE_INSENSITIVE_ORDER);
+        StringBuilder cmdTable = new StringBuilder();
+        cmdTable.append(headRow("Command","Description"));
+        for (String c : cmdNames) cmdTable.append(row(c, cmdDesc.get(c)));
         String css = "<style>body{font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#E4E6EB;line-height:1.42;margin:0;padding:0;}h1{font-size:18px;margin:0 0 8px 0;color:#ffffff;}h2{font-size:14px;margin:18px 0 6px 0;color:#ffffff;border-bottom:1px solid #444;padding-bottom:2px;}table{border-collapse:collapse;width:100%;}th,td{padding:3px 4px;font-size:11px;vertical-align:top;}tr:nth-child(odd){background:#292c33;}code,pre{background:#1e1f24;color:#C6D0E3;border:1px solid #3a3d44;padding:4px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:11px;}pre{overflow-x:auto;}ul{margin:4px 0 8px 18px;padding:0;}li{margin:2px 0;}.dim{color:#9aa0ac;font-size:11px;}</style>";
         return "<html>"+css+"<body>" +
                 "<h1>KP Webhook – Info</h1>" +
-                "<h2>Triggers</h2><ul>" +
-                li("MANUAL","Manuelt kjør")+
-                li("STAT","Skill LEVEL_UP / ABOVE / BELOW")+
-                li("WIDGET","Widget group[:child] lastes")+
-                li("PLAYER_SPAWN / PLAYER_DESPAWN","Spiller inn / ut")+
-                li("NPC_SPAWN / NPC_DESPAWN","NPC inn / ut – filtrer via liste (id eller navn)")+
-                li("ANIMATION_SELF","Egen animasjon-ID")+
-                li("MESSAGE","Chat melding filter")+
-                li("VARBIT / VARPLAYER","Endres til verdi")+
-                li("TICK","Hvert tick, lette visuelle")+
-                "</ul><h2>Kommandoer</h2><table>"+ headRow("Kommando","Beskrivelse") +
-                row("NOTIFY <text>","Chat melding")+
-                row("WEBHOOK <text>","Webhook message")+
-                row("SCREENSHOT [text]","Sender screenshot")+
-                row("HIGHLIGHT_*","Outline/Tile/Hull/Minimap (<=0 persistent)")+
-                row("TEXT_OVER|CENTER|UNDER","Overhead tekst (<=0 persistent)")+
-                row("OVERLAY_TEXT <text>","HUD overlay boks")+
-                row("INFOBOX <id> [tt]","Infobox ikon(er)")+
-                row("SLEEP <ms>","Pause ms")+
-                row("TICK <n>","Delay n ticks")+
-                row("STOP","Stopper alt")+
-                "</table><div class='dim'>Tokens utvides før kjøring.</div>"+
-                "<h2>Tokens</h2><ul>"+
-                li("${player}","Spiller")+
-                li("${stat}","Skill navn")+
-                li("${current}/${value}","Boosted / terskel")+
+                "<h2>Triggers</h2><ul>" + triggerHtml + "</ul>" +
+                "<h2>Commands</h2><table>" + cmdTable + "</table>" +
+                "<h2>Tokens</h2><ul>" +
+                li("${player}","Local player name")+
+                li("${stat}","Skill name")+
+                li("${current}/${value}","Boosted / threshold")+
                 li("${widgetGroup}/${widgetChild}","Widget IDs")+
-                li("${otherPlayer}/${otherCombat}","Annen spiller")+
-                li("${npcName}/${npcId}","Matchende NPC")+
-                li("${WORLD}","World")+
-                li("${STAT}/${CURRENT_STAT}","Real / boosted skill")+
-                li("${message}/${messageTypeId}","Chat data")+
+                li("${otherPlayer}/${otherCombat}","Other player name / combat")+
+                li("${npcName}/${npcId}","Matched NPC name / id")+
+                li("${TARGET}","Current target name (player or NPC, blank if none)")+
+                li("${WORLD}","World number")+
+                li("${STAT}/${CURRENT_STAT}","Real / boosted skill level")+
+                li("${message}/${messageTypeId}","Chat message & type id")+
                 li("Skill tokens","Real & CURRENT_ for: "+skillTokens)+
                 "</ul><div class='dim'>Varianter: ${NAME}, $NAME, {{NAME}}, legacy $SKILL.</div>"+
                 "<h2>Persistens <=0</h2><ul>"+
-                li("HIGHLIGHT_*","Upsert per rule")+
-                li("TEXT_*","Key per rule+pos")+
-                li("INFOBOX","Normal varighet")+
-                "</ul><h2>Eksempel</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE\nTEXT_OVER Goblin!\n</pre></body></html>";
+                li("HIGHLIGHT_*","Upsert per rule (persistent if duration <=0)")+
+                li("TEXT_*","Persistent if duration <=0 (keyed per rule+pos+target)")+
+                li("INFOBOX","Normal duration unless re-triggered")+
+                "</ul><h2>Example</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE NPC goblin\nTEXT_OVER NPC goblin Goblin!\n</pre></body></html>";
     }
 
     private String headRow(String a, String b){ return "<tr style='background:#333'><th style='text-align:left'>"+a+"</th><th style='text-align:left'>"+b+"</th></tr>"; }
@@ -515,6 +538,10 @@ public class KPWebhookPresetDialog extends JDialog
         {
             animationIdField.setText(String.valueOf(r.getAnimationConfig().getAnimationId()));
         }
+        else if (r.getTriggerType()== KPWebhookPreset.TriggerType.ANIMATION_TARGET && r.getAnimationConfig()!=null) {
+            animationIdField.setText(String.valueOf(r.getAnimationConfig().getAnimationId()));
+        }
+        // TARGET trigger has no extra config
         if (r.getTriggerType() == KPWebhookPreset.TriggerType.MESSAGE && r.getMessageConfig() != null)
         {
             if (r.getMessageConfig().getMessageId() != null)
@@ -617,7 +644,7 @@ public class KPWebhookPresetDialog extends JDialog
                 JOptionPane.showMessageDialog(this, "Select player option (ALL, Name or +/- range)"); return;
             }
         }
-        else if (trig == KPWebhookPreset.TriggerType.ANIMATION_SELF)
+        else if (trig == KPWebhookPreset.TriggerType.ANIMATION_SELF || trig == KPWebhookPreset.TriggerType.ANIMATION_TARGET)
         {
             int animId = 0;
             try { animId = Integer.parseInt(animationIdField.getText().trim()); }
@@ -1114,9 +1141,12 @@ public class KPWebhookPresetDialog extends JDialog
     private String[] buildTriggerModel()
     {
         KPWebhookPreset.TriggerType[] types = KPWebhookPreset.TriggerType.values();
-        String[] data = new String[types.length + 1];
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (KPWebhookPreset.TriggerType t : types) names.add(t.name());
+        java.util.Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
+        String[] data = new String[names.size() + 1];
         data[0] = TRIGGER_PLACEHOLDER;
-        for (int i=0;i<types.length;i++) data[i+1] = types[i].name();
+        for (int i=0;i<names.size();i++) data[i+1] = names.get(i);
         return data;
     }
 
@@ -1135,6 +1165,7 @@ public class KPWebhookPresetDialog extends JDialog
         List<String> skills = new ArrayList<>();
         skills.add(SKILL_PLACEHOLDER);
         for (Skill s : Skill.values()) skills.add(s.name());
+        java.util.Collections.sort(skills.subList(1, skills.size()), String.CASE_INSENSITIVE_ORDER);
         statSkillBox = new JComboBox<>(skills.toArray(new String[0]));
         g.gridx=1; g.weightx=1; statCard.add(statSkillBox, g); y++;
         g.gridx=0; g.gridy=y; g.weightx=0; statCard.add(new JLabel("Mode"), g);
@@ -1253,7 +1284,7 @@ public class KPWebhookPresetDialog extends JDialog
         nc.anchor = GridBagConstraints.WEST;
         nc.weightx = 1;
         int ncy=0;
-        nc.gridx=0; nc.gridy=ncy; nc.weightx=0; npcCard.add(new JLabel("NPC liste"), nc);
+        nc.gridx=0; nc.gridy=ncy; nc.weightx=0; npcCard.add(new JLabel("NPC list"), nc);
         npcListField = new JTextField();
         npcListField.setToolTipText("Kommaseparert liste: id eller navn. Navn: bruk underscore i stedet for mellomrom. Eksempel: 122,goblin,stray_dog");
         nc.gridx=1; nc.weightx=1; npcCard.add(npcListField, nc); ncy++;
@@ -1263,6 +1294,7 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET.name());
         cards.add(playerCard, "PLAYER");
         cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
+        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); // share same animation id field
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
         cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
@@ -1274,7 +1306,8 @@ public class KPWebhookPresetDialog extends JDialog
     {
         CardLayout cl = (CardLayout) (triggerCards.getLayout());
         String sel = (String) triggerTypeBox.getSelectedItem();
-        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) || KPWebhookPreset.TriggerType.TICK.name().equals(sel))
+        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) || KPWebhookPreset.TriggerType.TICK.name().equals(sel)
+                || KPWebhookPreset.TriggerType.TARGET.name().equals(sel))
         {
             cl.show(triggerCards, "NONE");
         }
