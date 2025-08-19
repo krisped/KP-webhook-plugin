@@ -4,6 +4,6 @@ public enum HighlightType {
     OUTLINE,
     TILE,
     HULL,
-    MINIMAP
+    MINIMAP,
+    SCREEN // new full screen border highlight
 }
-

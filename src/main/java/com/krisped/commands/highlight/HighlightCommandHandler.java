@@ -32,18 +32,17 @@ public class HighlightCommandHandler {
         else if (P_MINIMAP.matcher(upper).find()) type = HighlightType.MINIMAP;
         if (type == null) return false;
 
-        // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>]
-        String remainder = line.substring(line.indexOf(' ')+1).trim(); // may contain target or be same if no space
+        // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>|TARGET]
+        String remainder = line.contains(" ") ? line.substring(line.indexOf(' ')+1).trim() : "";
         ActiveHighlight.TargetType targetType = ActiveHighlight.TargetType.LOCAL_PLAYER;
         Set<String> targetNames = null;
         Set<Integer> targetIds = null;
         if (!remainder.isEmpty()) {
             String[] toks = remainder.split("\\s+", 3); // at most 3 parts
-            // If second token is target spec
             if (toks.length >= 1) {
                 String t0 = toks[0].toUpperCase(Locale.ROOT);
                 if (t0.equals("LOCAL_PLAYER")) {
-                    targetType = ActiveHighlight.TargetType.LOCAL_PLAYER; // nothing else
+                    targetType = ActiveHighlight.TargetType.LOCAL_PLAYER;
                 } else if (t0.equals("PLAYER") && toks.length >= 2) {
                     targetType = ActiveHighlight.TargetType.PLAYER_NAME;
                     targetNames = new HashSet<>();
@@ -59,8 +58,8 @@ public class HighlightCommandHandler {
                         targetNames = new HashSet<>();
                         targetNames.add(normalizeName(spec));
                     }
-                } else {
-                    // No recognized target keyword -> treat as no target spec (text or leftover) so keep LOCAL_PLAYER.
+                } else if (t0.equals("TARGET")) {
+                    targetType = ActiveHighlight.TargetType.TARGET;
                 }
             }
         }

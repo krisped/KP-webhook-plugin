@@ -55,6 +55,13 @@ public class KPWebhookPresetDialog extends JDialog
     // Animation trigger components
     private JPanel animationCard;
     private JTextField animationIdField;
+    // Graphic trigger components (reuse animationCard style)
+    private JPanel graphicCard; // new
+    private JTextField graphicIdField; // new
+    // Hitsplat trigger components
+    private JPanel hitsplatCard; // new
+    private JComboBox<String> hitsplatModeBox; // new
+    private JSpinner hitsplatValueSpinner; // new
     // Message trigger components
     private JPanel messageCard;
     private JSpinner messageIdSpinner; // now only ID spinner
@@ -83,11 +90,13 @@ public class KPWebhookPresetDialog extends JDialog
     private HighlightCategoryPanel tilePanel;
     private HighlightCategoryPanel hullPanel;
     private HighlightCategoryPanel minimapPanel; // restored minimap panel
+    private HighlightCategoryPanel screenPanel; // new screen highlight panel
     private TextCategoryPanel textOverPanel;
     private TextCategoryPanel textCenterPanel;
     private TextCategoryPanel textUnderPanel;
     private OverlayTextPanel overlayTextPanel; // new simple overlay text panel
     private InfoboxCategoryPanel infoboxPanel; // new infobox panel
+    private ImgCategoryPanel imgPanel; // new IMG panel
     // Screenshot settings removed - keeping it simple
     /* -------- Info Tab -------- */
     private JEditorPane infoPane; // replaced JTextArea
@@ -97,27 +106,34 @@ public class KPWebhookPresetDialog extends JDialog
     /* Default commands */
     private static final String DEFAULT_COMMANDS_TEXT =
             "# Available commands (alphabetical):\n" +
-            "#  HIGHLIGHT_HULL            - Hull highlight (player)\n" +
+            "#  HIGHLIGHT_HULL            - Hull highlight (player or target)\n" +
             "#  HIGHLIGHT_MINIMAP        - Minimap marker (reserved)\n" +
-            "#  HIGHLIGHT_OUTLINE        - Outline local player\n" +
-            "#  HIGHLIGHT_TILE           - Highlight tile under local player\n" +
+            "#  HIGHLIGHT_OUTLINE        - Outline local player (or targeted entity)\n" +
+            "#  HIGHLIGHT_TILE           - Highlight tile under entity\n" +
+            "#  HIGHLIGHT_SCREEN         - Screen border warning\n" +
+            "#  IMG_OVER <id>            - Overhead image above (item id, or negative sprite id)\n" +
+            "#  IMG_CENTER <id>          - Overhead image centered\n" +
+            "#  IMG_UNDER <id>           - Overhead image under feet\n" +
             "#  INFOBOX <id> [message]   - Show icon with optional custom tooltip text\n" +
             "#  NOTIFY <text>            - In-game notification\n" +
             "#  OVERLAY_TEXT <text>      - Screen overlay box (top center)\n" +
             "#  SCREENSHOT [text]        - Capture client area & upload (optional caption)\n" +
             "#  SLEEP <ms>               - Millisecond delay in sequence\n" +
             "#  STOP                     - Stop all active sequences\n" +
-            "#  TEXT_CENTER <text>       - Text centered on player\n" +
-            "#  TEXT_OVER <text>         - Text above player\n" +
+            "#  STOP_RULE [id]           - Stop visuals/sequences for a single rule (default current)\n" +
+            "#  TEXT_CENTER <text>       - Text centered on entity\n" +
+            "#  TEXT_OVER <text>         - Text above entity\n" +
             "#  TEXT_UNDER <text>        - Text under feet\n" +
             "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
-            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}}\n" +
+            "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id>\n" +
+            "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
+            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}}\n" +
             "\n" +
             "NOTIFY You gained a level in {{stat}}\n" +
-            "HIGHLIGHT_OUTLINE\n" +
-            "WEBHOOK Level in {{stat}} now {{current}}\n" +
-            "TEXT_OVER Grats {{player}}!";
+            "HIGHLIGHT_OUTLINE TARGET\n" +
+            "WEBHOOK Level in {{stat}} now {{current}} vs target $TARGET\n" +
+            "TEXT_OVER TARGET $TARGET";
 
     public KPWebhookPresetDialog(Window owner,
                                  KPWebhookPlugin plugin,
@@ -265,16 +281,22 @@ public class KPWebhookPresetDialog extends JDialog
                 existing!=null && Boolean.TRUE.equals(existing.getHlTileBlink()),
                 existing!=null?existing.getHlTileWidth():2,
                 "Highlight Tile");
-        minimapPanel = new HighlightCategoryPanel(existing!=null?existing.getHlMinimapDuration():10,
-                existing!=null?existing.getHlMinimapColor():"#00FFFF",
-                existing!=null && Boolean.TRUE.equals(existing.getHlMinimapBlink()),
-                existing!=null?existing.getHlMinimapWidth():2,
-                "Highlight Minimap");
+        // Added missing hullPanel initialization (was causing NPE in CollapsibleSection)
         hullPanel = new HighlightCategoryPanel(existing!=null?existing.getHlHullDuration():10,
                 existing!=null?existing.getHlHullColor():"#FF55FF",
                 existing!=null && Boolean.TRUE.equals(existing.getHlHullBlink()),
                 existing!=null?existing.getHlHullWidth():2,
                 "Highlight Hull");
+        minimapPanel = new HighlightCategoryPanel(existing!=null?existing.getHlMinimapDuration():10,
+                existing!=null?existing.getHlMinimapColor():"#00FFFF",
+                existing!=null && Boolean.TRUE.equals(existing.getHlMinimapBlink()),
+                existing!=null?existing.getHlMinimapWidth():2,
+                "Highlight Minimap");
+        screenPanel = new HighlightCategoryPanel(existing!=null?existing.getHlScreenDuration():10,
+                existing!=null?existing.getHlScreenColor():"#FF0000",
+                existing!=null && Boolean.TRUE.equals(existing.getHlScreenBlink()),
+                existing!=null?existing.getHlScreenWidth():4,
+                "Highlight Screen");
 
         textUnderPanel = new TextCategoryPanel(
                 existing!=null?existing.getTextUnderDuration():10,
@@ -311,6 +333,10 @@ public class KPWebhookPresetDialog extends JDialog
         infoboxPanel = new InfoboxCategoryPanel(
                 existing!=null?existing.getInfoboxDuration():100,
                 "INFOBOX");
+        imgPanel = new ImgCategoryPanel(
+                existing!=null?existing.getImgDuration():100,
+                existing!=null && Boolean.TRUE.equals(existing.getImgBlink()),
+                "IMG");
 
         // Highlight group header
         JLabel hlHeader = new JLabel("Highlight");
@@ -322,6 +348,7 @@ public class KPWebhookPresetDialog extends JDialog
         hlSections.add(new CollapsibleSection(minimapPanel));
         hlSections.add(new CollapsibleSection(outlinePanel));
         hlSections.add(new CollapsibleSection(tilePanel));
+        hlSections.add(new CollapsibleSection(screenPanel));
         hlSections.sort((a,b)-> a.header.getText().compareToIgnoreCase(b.header.getText()));
         for (CollapsibleSection cs : hlSections) settingsRoot.add(cs);
         settingsRoot.add(Box.createVerticalStrut(6));
@@ -335,7 +362,7 @@ public class KPWebhookPresetDialog extends JDialog
         textSections.add(new CollapsibleSection(textCenterPanel));
         textSections.add(new CollapsibleSection(textOverPanel));
         textSections.add(new CollapsibleSection(textUnderPanel));
-        textSections.sort((a,b)-> a.header.getText().compareToIgnoreCase(b.header.getText()));
+        // removed alphabetical sort to preserve custom order
         for (CollapsibleSection cs : textSections) settingsRoot.add(cs);
         settingsRoot.add(Box.createVerticalStrut(6));
         JLabel ibHeader = new JLabel("Infobox");
@@ -343,6 +370,12 @@ public class KPWebhookPresetDialog extends JDialog
         ibHeader.setBorder(new EmptyBorder(4,2,2,2));
         settingsRoot.add(ibHeader);
         settingsRoot.add(new CollapsibleSection(infoboxPanel));
+        settingsRoot.add(Box.createVerticalStrut(6));
+        JLabel imgHeader = new JLabel("IMG");
+        imgHeader.setFont(FontManager.getRunescapeBoldFont().deriveFont(HEADER_FONT_SIZE));
+        imgHeader.setBorder(new EmptyBorder(4,2,2,2));
+        settingsRoot.add(imgHeader);
+        settingsRoot.add(new CollapsibleSection(imgPanel));
 
         return new JScrollPane(settingsRoot);
     }
@@ -385,6 +418,10 @@ public class KPWebhookPresetDialog extends JDialog
         java.util.Map<String,String> triggerDesc = new java.util.HashMap<>();
         triggerDesc.put("ANIMATION_SELF","Local player animation id");
         triggerDesc.put("ANIMATION_TARGET","Current target animation id");
+        triggerDesc.put("GRAPHIC_SELF","Local player graphic id"); // new
+        triggerDesc.put("GRAPHIC_TARGET","Current target graphic id"); // new
+        triggerDesc.put("HITSPLAT_SELF","Damage you take (conditional)"); // renamed
+        triggerDesc.put("HITSPLAT_TARGET","Damage your target takes (conditional)"); // renamed
         triggerDesc.put("MANUAL","Manual trigger");
         triggerDesc.put("MESSAGE","Chat message filter");
         triggerDesc.put("NPC_DESPAWN","NPC despawn – filter via list (id or name)");
@@ -404,12 +441,15 @@ public class KPWebhookPresetDialog extends JDialog
         // Command descriptions mapping
         java.util.Map<String,String> cmdDesc = new java.util.HashMap<>();
         cmdDesc.put("HIGHLIGHT_*","Outline/Tile/Hull/Minimap (<=0 persistent)");
+        cmdDesc.put("HIGHLIGHT_SCREEN","Full client border highlight (<=0 persistent)");
+        cmdDesc.put("IMG_OVER|CENTER|UNDER <id>","Overhead image (item id, negative = sprite id) with optional target");
         cmdDesc.put("INFOBOX <id> [tt]","Info box icon(s)");
         cmdDesc.put("NOTIFY <text>","In-game chat message");
         cmdDesc.put("OVERLAY_TEXT <text>","HUD overlay box");
         cmdDesc.put("SCREENSHOT [text]","Send screenshot (optional caption)");
         cmdDesc.put("SLEEP <ms>","Pause sequence ms");
         cmdDesc.put("STOP","Stop all active sequences");
+        cmdDesc.put("STOP_RULE [id]","Stop visuals/sequences for one rule (omit id = current)");
         cmdDesc.put("TEXT_OVER|CENTER|UNDER","Overhead text (<=0 persistent) with optional target");
         cmdDesc.put("TICK <n>","Delay n game ticks");
         cmdDesc.put("WEBHOOK <text>","Send message to webhook");
@@ -434,13 +474,18 @@ public class KPWebhookPresetDialog extends JDialog
                 li("${WORLD}","World number")+
                 li("${STAT}/${CURRENT_STAT}","Real / boosted skill level")+
                 li("${message}/${messageTypeId}","Chat message & type id")+
+                // Removed generic ${HITSPLAT} token per request
+                li("${HITSPLAT_SELF}","Damage amount if hitsplat was on you (blank otherwise)")+ // updated token meaning
+                li("${HITSPLAT_TARGET}","Damage amount if hitsplat was on your current target (blank otherwise)")+ // new token
+                li("IMG id","Positive = item id, negative = sprite id (IMG_* commands)")+
                 li("Skill tokens","Real & CURRENT_ for: "+skillTokens)+
                 "</ul><div class='dim'>Varianter: ${NAME}, $NAME, {{NAME}}, legacy $SKILL.</div>"+
                 "<h2>Persistens <=0</h2><ul>"+
                 li("HIGHLIGHT_*","Upsert per rule (persistent if duration <=0)")+
                 li("TEXT_*","Persistent if duration <=0 (keyed per rule+pos+target)")+
+                li("IMG_*","Persistent if duration <=0 (overhead image stays until STOP / rule reset)")+
                 li("INFOBOX","Normal duration unless re-triggered")+
-                "</ul><h2>Example</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE NPC goblin\nTEXT_OVER NPC goblin Goblin!\n</pre></body></html>";
+                "</ul><h2>Example</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE TARGET\nTEXT_OVER TARGET $TARGET\n</pre></body></html>";
     }
 
     private String headRow(String a, String b){ return "<tr style='background:#333'><th style='text-align:left'>"+a+"</th><th style='text-align:left'>"+b+"</th></tr>"; }
@@ -474,7 +519,7 @@ public class KPWebhookPresetDialog extends JDialog
             triggerTypeBox.setSelectedIndex(0);
             useDefaultWebhookBox.setSelected(false);
             customWebhookField.setText("");
-            activeBox.setSelected(true);
+            activeBox.setSelected(true); // fixed
             if (categoryField != null) categoryField.setText("");
             updateTriggerVisibility();
             updateWebhookEnable();
@@ -541,7 +586,18 @@ public class KPWebhookPresetDialog extends JDialog
         else if (r.getTriggerType()== KPWebhookPreset.TriggerType.ANIMATION_TARGET && r.getAnimationConfig()!=null) {
             animationIdField.setText(String.valueOf(r.getAnimationConfig().getAnimationId()));
         }
-        // TARGET trigger has no extra config
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.GRAPHIC_SELF && r.getGraphicConfig()!=null) { // new
+            graphicIdField.setText(String.valueOf(r.getGraphicConfig().getGraphicId()));
+        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.GRAPHIC_TARGET && r.getGraphicConfig()!=null) {
+            graphicIdField.setText(String.valueOf(r.getGraphicConfig().getGraphicId()));
+        }
+        if ((r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_SELF || r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_TARGET) && r.getHitsplatConfig()!=null) { // renamed
+            KPWebhookPreset.HitsplatConfig hc = r.getHitsplatConfig();
+            String dir = "Above";
+            if (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS || hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL) dir="Below";
+            hitsplatModeBox.setSelectedItem(dir);
+            if (hc.getValue()!=null) hitsplatValueSpinner.setValue(hc.getValue());
+        }
         if (r.getTriggerType() == KPWebhookPreset.TriggerType.MESSAGE && r.getMessageConfig() != null)
         {
             if (r.getMessageConfig().getMessageId() != null)
@@ -583,6 +639,8 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.WidgetConfig widgetCfg = null;
         KPWebhookPreset.PlayerConfig playerCfg = null;
         KPWebhookPreset.AnimationConfig animationCfg = null;
+        KPWebhookPreset.GraphicConfig graphicCfg = null; // new
+        KPWebhookPreset.HitsplatConfig hitsplatCfg = null; // new
         KPWebhookPreset.MessageConfig messageCfg = null;
         KPWebhookPreset.VarbitConfig varbitCfg = null;
         KPWebhookPreset.VarplayerConfig varplayerCfg = null;
@@ -650,6 +708,19 @@ public class KPWebhookPresetDialog extends JDialog
             try { animId = Integer.parseInt(animationIdField.getText().trim()); }
             catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid animation ID"); return; }
             animationCfg = KPWebhookPreset.AnimationConfig.builder().animationId(animId).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.GRAPHIC_SELF || trig == KPWebhookPreset.TriggerType.GRAPHIC_TARGET) { // new
+            int gid = 0;
+            try { gid = Integer.parseInt(graphicIdField.getText().trim()); }
+            catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid graphic ID"); return; }
+            graphicCfg = KPWebhookPreset.GraphicConfig.builder().graphicId(gid).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.HITSPLAT_SELF || trig == KPWebhookPreset.TriggerType.HITSPLAT_TARGET) { // renamed
+            Integer val = (Integer) hitsplatValueSpinner.getValue();
+            if (val == null) { JOptionPane.showMessageDialog(this, "Enter hitsplat value"); return; }
+            String sel = (String) hitsplatModeBox.getSelectedItem();
+            KPWebhookPreset.HitsplatConfig.Mode mode = "Below".equals(sel)? KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL : KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+            hitsplatCfg = KPWebhookPreset.HitsplatConfig.builder().mode(mode).value(val).build();
         }
         else if (trig == KPWebhookPreset.TriggerType.MESSAGE)
         {
@@ -727,6 +798,10 @@ public class KPWebhookPresetDialog extends JDialog
                 .hlMinimapBlink(minimapPanel.isBlink())
                 .hlMinimapColor(minimapPanel.getColorHex())
                 .hlMinimapWidth(minimapPanel.getStoredWidth())
+                .hlScreenDuration(screenPanel.getDuration())
+                .hlScreenBlink(screenPanel.isBlink())
+                .hlScreenColor(screenPanel.getColorHex())
+                .hlScreenWidth(screenPanel.getStoredWidth())
                 .textOverColor(textOverPanel.getColorHex())
                 .textOverBlink(textOverPanel.isBlink())
                 .textOverSize(textOverPanel.getSizeValue())
@@ -739,7 +814,7 @@ public class KPWebhookPresetDialog extends JDialog
                 .textCenterSize(textCenterPanel.getSizeValue())
                 .textCenterDuration(textCenterPanel.getDuration())
                 .textCenterBold(textCenterPanel.isBold())
-                .textCenterItalic(textCenterPanel.isItalic()) // corrected
+                .textCenterItalic(textCenterPanel.isItalic())
                 .textCenterUnderline(textCenterPanel.isUnderline())
                 .textUnderColor(textUnderPanel.getColorHex())
                 .textUnderBlink(textUnderPanel.isBlink())
@@ -752,12 +827,16 @@ public class KPWebhookPresetDialog extends JDialog
                 .overlayTextColor(overlayTextPanel.getColorHex())
                 .overlayTextSize(overlayTextPanel.getSizeValue())
                 .infoboxDuration(infoboxPanel.getDuration())
+                .imgDuration(imgPanel.getDuration())
+                .imgBlink(imgPanel.isBlink())
                 .npcConfig(npcCfg)
                 .playerConfig(playerCfg)
                 .animationConfig(animationCfg)
+                .graphicConfig(graphicCfg) // new
                 .messageConfig(messageCfg)
                 .varbitConfig(varbitCfg)
-                .varplayerConfig(varplayerCfg);
+                .varplayerConfig(varplayerCfg)
+                .hitsplatConfig(hitsplatCfg);
 
         result = b.build();
         dispose();
@@ -1098,7 +1177,8 @@ public class KPWebhookPresetDialog extends JDialog
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setOpaque(false);
             this.content = inner;
-            this.title = inner instanceof HighlightCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle() : (inner instanceof TextCategoryPanel ? ((TitledBorder)inner.getBorder()).getTitle() : "Section");
+            Border tmpBorder = inner.getBorder();
+            this.title = tmpBorder instanceof TitledBorder ? ((TitledBorder)tmpBorder).getTitle() : "Section";
             inner.setBorder(null); // remove original titled border for compact layout
             header = new JButton(labelText());
             header.setFocusPainted(false);
@@ -1227,6 +1307,28 @@ public class KPWebhookPresetDialog extends JDialog
         a.gridx=0; a.gridy=ay; a.weightx=0; animationCard.add(new JLabel("Animation ID"), a);
         animationIdField = new JTextField();
         a.gridx=1; a.weightx=1; animationCard.add(animationIdField, a); ay++;
+        // GRAPHIC card (copy of animation style)
+        graphicCard = new JPanel(new GridBagLayout());
+        GridBagConstraints gfc = new GridBagConstraints();
+        gfc.insets = new Insets(4,4,4,4);
+        gfc.fill = GridBagConstraints.HORIZONTAL;
+        gfc.anchor = GridBagConstraints.WEST;
+        gfc.weightx = 1; int gfy=0;
+        gfc.gridx=0; gfc.gridy=gfy; gfc.weightx=0; graphicCard.add(new JLabel("Graphic ID"), gfc);
+        graphicIdField = new JTextField();
+        gfc.gridx=1; gfc.weightx=1; graphicCard.add(graphicIdField, gfc); gfy++;
+        // HITSPLAT card
+        hitsplatCard = new JPanel(new GridBagLayout());
+        GridBagConstraints hs = new GridBagConstraints();
+        hs.insets = new Insets(4,4,4,4);
+        hs.fill = GridBagConstraints.HORIZONTAL;
+        hs.anchor = GridBagConstraints.WEST; hs.weightx=1; int hsy=0;
+        hs.gridx=0; hs.gridy=hsy; hs.weightx=0; hitsplatCard.add(new JLabel("Direction"), hs);
+        hitsplatModeBox = new JComboBox<>(new String[]{"Above","Below"});
+        hs.gridx=1; hs.weightx=1; hitsplatCard.add(hitsplatModeBox, hs); hsy++;
+        hs.gridx=0; hs.gridy=hsy; hs.weightx=0; hitsplatCard.add(new JLabel("Value"), hs);
+        hitsplatValueSpinner = new JSpinner(new SpinnerNumberModel(1,0,5000,1));
+        hs.gridx=1; hs.weightx=1; hitsplatCard.add(hitsplatValueSpinner, hs); hsy++;
         // MESSAGE card
         messageCard = new JPanel(new GridBagLayout());
         GridBagConstraints m = new GridBagConstraints();
@@ -1295,6 +1397,10 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(playerCard, "PLAYER");
         cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
         cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); // share same animation id field
+        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_SELF.name()); // new
+        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); // new
+        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_SELF.name()); // renamed
+        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name()); // renamed
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
         cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
@@ -1337,10 +1443,12 @@ public class KPWebhookPresetDialog extends JDialog
         setPanelEnabled(tilePanel, !isTick);
         setPanelEnabled(hullPanel, !isTick);
         setPanelEnabled(minimapPanel, !isTick);
+        setPanelEnabled(screenPanel, !isTick);
         setPanelEnabled(textOverPanel, !isTick);
         setPanelEnabled(textCenterPanel, !isTick);
         setPanelEnabled(textUnderPanel, !isTick);
         setPanelEnabled(overlayTextPanel, !isTick);
+        // imgPanel is independent; allow configuration always
     }
     private void setPanelEnabled(Component c, boolean enabled) {
         if (c == null) return;
@@ -1457,5 +1565,62 @@ public class KPWebhookPresetDialog extends JDialog
         if (!ids.isEmpty()) b.npcIds(ids);
         if (!names.isEmpty()) b.npcNames(names);
         return b.build();
+    }
+
+    private KPWebhookPreset.HitsplatConfig.Mode parseMode(String sym) {
+        if (sym == null) return KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+        if (sym.equalsIgnoreCase("Above")) return KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+        if (sym.equalsIgnoreCase("Below")) return KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL;
+        // legacy symbols
+        switch (sym) {
+            case ">": return KPWebhookPreset.HitsplatConfig.Mode.GREATER;
+            case ">=": return KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+            case "=": return KPWebhookPreset.HitsplatConfig.Mode.EQUAL;
+            case "<=": return KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL;
+            case "<": return KPWebhookPreset.HitsplatConfig.Mode.LESS;
+        }
+        return KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+    }
+    private String modeSymbol(KPWebhookPreset.HitsplatConfig.Mode m) {
+        if (m==null) return "Above";
+        switch (m) {
+            case GREATER:
+            case GREATER_EQUAL:
+            case EQUAL: return "Above";
+            case LESS:
+            case LESS_EQUAL: return "Below";
+        }
+        return "Above";
+    }
+
+    // === Added minimal CategoryTextPanel (Duration, Size, Blink) ===
+    private static class ImgCategoryPanel extends JPanel {
+        private final JSpinner durationSpinner;
+        private final JCheckBox blinkBox;
+        ImgCategoryPanel(int duration, boolean blink, String title) {
+            super(new GridBagLayout());
+            setBorder(new TitledBorder(title));
+            setOpaque(false);
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(3,4,3,4);
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST; c.weightx=1; int y=0;
+            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(durLbl,c);
+            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1));
+            Dimension ds = durationSpinner.getPreferredSize();
+            durationSpinner.setPreferredSize(new Dimension(70, ds.height));
+            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
+            durRow.add(durationSpinner); durRow.add(new JLabel("Ticks"));
+            c.gridx=1; add(durRow,c); y++;
+            JLabel blinkLbl = new JLabel("Blink"); blinkLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
+            c.gridx=0; c.gridy=y; add(blinkLbl,c);
+            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0));
+            c.gridx=1; add(blinkBox,c); y++;
+            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
+            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
+        }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        boolean isBlink(){ return blinkBox.isSelected(); }
     }
 }

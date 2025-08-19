@@ -103,6 +103,8 @@ public class KPWebhookStorage
             {
                 try {
                     String json = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+                    // Migrate old enum names before parsing
+                    json = migrateTriggerEnums(json);
                     KPWebhookPreset p = gson.fromJson(json, KPWebhookPreset.class);
                     if (p != null) list.add(p);
                 } catch (Exception e) {
@@ -118,19 +120,14 @@ public class KPWebhookStorage
             {
                 try {
                     String json = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+                    json = migrateTriggerEnums(json);
                     KPWebhookPreset p = gson.fromJson(json, KPWebhookPreset.class);
                     if (p != null)
                     {
-                        // Only add if not already present (same id)
                         boolean exists = list.stream().anyMatch(x -> x.getId() == p.getId());
                         if (!exists) list.add(p);
-                        // Save into new format if no file for its title
                         save(p, null);
-                        // Optionally delete legacy file
-                        if (!f.delete())
-                        {
-                            // ignore
-                        }
+                        if (!f.delete()) { /* ignore */ }
                     }
                 } catch (Exception e) {
                     log.warn("Failed to migrate legacy preset {}", f.getName(), e);
@@ -139,6 +136,12 @@ public class KPWebhookStorage
         }
         log.info("Loaded {} preset(s) from {}", list.size(), dir.getAbsolutePath());
         return list;
+    }
+
+    private String migrateTriggerEnums(String json) {
+        if (json == null) return null;
+        return json.replace("\"triggerType\":\"HIT_SPLAT_SELF\"", "\"triggerType\":\"HITSPLAT_SELF\"")
+                .replace("\"triggerType\":\"HIT_SPLAT_TARGET\"", "\"triggerType\":\"HITSPLAT_TARGET\"");
     }
 
     public void save(KPWebhookPreset preset, String previousTitle)

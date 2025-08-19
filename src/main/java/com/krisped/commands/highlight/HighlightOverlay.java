@@ -1,6 +1,7 @@
 package com.krisped.commands.highlight;
 
 import com.krisped.KPWebhookPlugin;
+import com.krisped.KPWebhookPlugin.ActiveOverheadImage;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.NPC;
@@ -16,6 +17,7 @@ import net.runelite.client.ui.overlay.outline.ModelOutlineRenderer;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Collections;
@@ -49,6 +51,7 @@ public class HighlightOverlay extends Overlay {
         if (local == null) return null;
 
         List<ActiveHighlight> active = highlightManager.getActiveHighlights();
+        Actor currentTarget = plugin.getCurrentTargetActor();
         if (!active.isEmpty()) {
             Collection<Player> players = enumeratePlayers();
             Collection<NPC> npcs = enumerateNpcs();
@@ -77,6 +80,12 @@ public class HighlightOverlay extends Overlay {
                                 renderHighlightFor(graphics, h, npc);
                             }
                         }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.TARGET) {
+                    if (currentTarget instanceof Player) {
+                        renderHighlightFor(graphics, h, (Player)currentTarget);
+                    } else if (currentTarget instanceof NPC) {
+                        renderHighlightFor(graphics, h, (NPC)currentTarget);
                     }
                 }
             }
@@ -107,6 +116,40 @@ public class HighlightOverlay extends Overlay {
                             if (n!=null && aot.getTargetNames()!=null && aot.getTargetNames().contains(n)) drawTextOverEntity(graphics, npc, aot);
                         }
                     }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.TARGET) {
+                    if (currentTarget instanceof Player) drawTextOverEntity(graphics, (Player)currentTarget, aot);
+                    else if (currentTarget instanceof NPC) drawTextOverEntity(graphics, (NPC)currentTarget, aot);
+                }
+            }
+        }
+        // Overhead images
+        java.util.List<ActiveOverheadImage> images = plugin.getOverheadImages();
+        if (!images.isEmpty()) {
+            Collection<Player> players = enumeratePlayers();
+            Collection<NPC> npcs = enumerateNpcs();
+            for (ActiveOverheadImage oi : images) {
+                if (!oi.isVisiblePhase()) continue;
+                if (oi.getTargetType()== ActiveOverheadImage.TargetType.LOCAL_PLAYER || oi.getTargetType()==null) {
+                    drawImageOverEntity(graphics, local, oi);
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.PLAYER_NAME) {
+                    for (Player p : players) {
+                        if (p==null || p.getName()==null) continue;
+                        String n = p.getName().replace('_',' ').trim().toLowerCase();
+                        if (oi.getTargetNames()!=null && oi.getTargetNames().contains(n)) drawImageOverEntity(graphics, p, oi);
+                    }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.NPC_ID || oi.getTargetType()== ActiveOverheadImage.TargetType.NPC_NAME) {
+                    for (NPC npc : npcs) {
+                        if (npc==null) continue;
+                        if (oi.getTargetType()== ActiveOverheadImage.TargetType.NPC_ID) {
+                            if (oi.getTargetIds()!=null && oi.getTargetIds().contains(npc.getId())) drawImageOverEntity(graphics, npc, oi);
+                        } else {
+                            String n = npc.getName(); if (n!=null) { n = n.replace('_',' ').trim().toLowerCase(); }
+                            if (n!=null && oi.getTargetNames()!=null && oi.getTargetNames().contains(n)) drawImageOverEntity(graphics, npc, oi);
+                        }
+                    }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.TARGET) {
+                    if (currentTarget instanceof Player) drawImageOverEntity(graphics, (Player)currentTarget, oi);
+                    else if (currentTarget instanceof NPC) drawImageOverEntity(graphics, (NPC)currentTarget, oi);
                 }
             }
         }
@@ -243,6 +286,41 @@ public class HighlightOverlay extends Overlay {
             g.drawLine(x-1, underlineY+1, x+w+1, underlineY+1);
             g.setColor(color);
             g.drawLine(x, underlineY, x+w, underlineY);
+        }
+    }
+
+    private void drawImageOverEntity(Graphics2D graphics, Actor actor, ActiveOverheadImage oi) {
+        if (actor == null || oi == null || oi.getImage()==null) return;
+        Shape hull = actor.getConvexHull();
+        BufferedImage img = oi.getImage();
+        int drawX, drawY;
+        if (hull != null) {
+            Rectangle b = hull.getBounds();
+            drawX = b.x + b.width/2 - img.getWidth()/2;
+            switch (oi.getPosition()) {
+                case "Above":
+                    drawY = b.y - img.getHeight() - 4; break;
+                case "Center":
+                    drawY = b.y + (b.height/2) - (img.getHeight()/2); break;
+                case "Under":
+                default:
+                    drawY = b.y + b.height + 4; break;
+            }
+            graphics.drawImage(img, drawX, drawY, null);
+            return;
+        }
+        LocalPoint lp = actor.getLocalLocation(); if (lp==null) return;
+        int logical = actor.getLogicalHeight();
+        int zOffset;
+        switch (oi.getPosition()) {
+            case "Above": zOffset = logical + 40; break; // a bit higher for icon
+            case "Center": zOffset = logical / 2; break;
+            case "Under": default: zOffset = 0; break;
+        }
+        // Corrected parameter order: (client, localPoint, image, zOffset)
+        net.runelite.api.Point p = Perspective.getCanvasImageLocation(client, lp, img, zOffset);
+        if (p != null) {
+            graphics.drawImage(img, p.getX() - img.getWidth()/2, p.getY() - img.getHeight()/2, null);
         }
     }
 

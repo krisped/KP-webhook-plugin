@@ -21,6 +21,10 @@ public class KPWebhookPreset
         NPC_DESPAWN, // new
         ANIMATION_SELF,
         ANIMATION_TARGET, // new target animation trigger
+        GRAPHIC_SELF, // new: local spot/graphic id trigger
+        GRAPHIC_TARGET, // new: target spot/graphic id trigger
+        HITSPLAT_SELF, // renamed from HIT_SPLAT_SELF
+        HITSPLAT_TARGET, // renamed from HIT_SPLAT_TARGET
         MESSAGE,
         VARBIT,
         VARPLAYER,
@@ -86,6 +90,28 @@ public class KPWebhookPreset
     @NoArgsConstructor
     @AllArgsConstructor
     @Builder
+    public static class GraphicConfig
+    {
+        private Integer graphicId;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class HitsplatConfig {
+        public enum Mode { GREATER, GREATER_EQUAL, EQUAL, LESS_EQUAL, LESS }
+        @Builder.Default
+        private Mode mode = Mode.GREATER;
+        private Integer value; // threshold value
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
     public static class MessageConfig
     {
         private Integer messageId; // ChatMessageType ID
@@ -135,6 +161,8 @@ public class KPWebhookPreset
     private WidgetConfig widgetConfig;
     private PlayerConfig playerConfig;
     private AnimationConfig animationConfig;
+    private GraphicConfig graphicConfig; // new graphic config
+    private HitsplatConfig hitsplatConfig; // new hitsplat config
     private MessageConfig messageConfig;
     private VarbitConfig varbitConfig;
     private VarplayerConfig varplayerConfig;
@@ -204,6 +232,18 @@ public class KPWebhookPreset
     private Boolean hlMinimapBlink = false;
     @Builder.Default
     private Integer hlMinimapBlinkInterval = 2;
+
+    // =========== Highlight SCREEN settings (new) ===========
+    @Builder.Default
+    private Integer hlScreenDuration = 5;
+    @Builder.Default
+    private Integer hlScreenWidth = 4; // border thickness
+    @Builder.Default
+    private String  hlScreenColor = "#FF0000"; // default warning red
+    @Builder.Default
+    private Boolean hlScreenBlink = false;
+    @Builder.Default
+    private Integer hlScreenBlinkInterval = 2;
 
     // =========== Text OVER settings ===========
     @Builder.Default
@@ -275,6 +315,11 @@ public class KPWebhookPreset
     @Builder.Default
     private String infoboxColor = "#FFFFFF"; // optional border / future use
 
+    // =========== IMG settings (simple duration) ==========
+    @Builder.Default
+    private Integer imgDuration = 100; // ticks
+    @Builder.Default
+    private Boolean imgBlink = false; // blink overhead images each tick when true
 
     public String prettyTrigger()
     {
@@ -298,6 +343,22 @@ public class KPWebhookPreset
                     return "ANIMATION_TARGET ?";
                 }
                 return "ANIMATION_TARGET " + animationConfig.getAnimationId();
+            case GRAPHIC_SELF:
+                if (graphicConfig == null || graphicConfig.getGraphicId() == null) {
+                    return "GRAPHIC_SELF ?";
+                }
+                return "GRAPHIC_SELF " + graphicConfig.getGraphicId();
+            case GRAPHIC_TARGET:
+                if (graphicConfig == null || graphicConfig.getGraphicId() == null) {
+                    return "GRAPHIC_TARGET ?";
+                }
+                return "GRAPHIC_TARGET " + graphicConfig.getGraphicId();
+            case HITSPLAT_SELF:
+                if (hitsplatConfig == null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
+                return "HITSPLAT_SELF " + humanHitsplatMode(hitsplatConfig.getMode()) + hitsplatConfig.getValue();
+            case HITSPLAT_TARGET:
+                if (hitsplatConfig == null || hitsplatConfig.getValue()==null) return "HITSPLAT_TARGET ?";
+                return "HITSPLAT_TARGET " + humanHitsplatMode(hitsplatConfig.getMode()) + hitsplatConfig.getValue();
             default:
                 // fall back to existing switch below
                 break;
@@ -412,8 +473,42 @@ public class KPWebhookPreset
                 return "TARGET (current)";
             case ANIMATION_TARGET:
                 return "ANIMATION_TARGET";
+            case GRAPHIC_SELF:
+                return "GRAPHIC_SELF";
+            case GRAPHIC_TARGET:
+                return "GRAPHIC_TARGET";
+            case HITSPLAT_SELF:
+                return "HITSPLAT_SELF";
+            case HITSPLAT_TARGET:
+                return "HITSPLAT_TARGET";
             default:
                 return "?";
+        }
+    }
+
+    private static String modeSymbol(HitsplatConfig.Mode m) {
+        if (m == null) return "?";
+        switch (m) {
+            case GREATER: return ">";
+            case GREATER_EQUAL: return ">=";
+            case EQUAL: return "=";
+            case LESS_EQUAL: return "<=";
+            case LESS: return "<";
+        }
+        return "?";
+    }
+    private static String humanHitsplatMode(HitsplatConfig.Mode m) {
+        if (m == null) return "";
+        switch (m) {
+            case LESS:
+            case LESS_EQUAL:
+                return "Below ";
+            case EQUAL:
+                return "="; // rarely used / legacy
+            case GREATER:
+            case GREATER_EQUAL:
+            default:
+                return "Above ";
         }
     }
 }

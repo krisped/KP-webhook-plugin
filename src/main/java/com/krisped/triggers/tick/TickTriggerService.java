@@ -53,7 +53,7 @@ public class TickTriggerService {
     }
 
     private void parseAndUpsertTargetedHighlight(KPWebhookPreset rule, String line) {
-        // Accept: HIGHLIGHT_<TYPE> [LOCAL_PLAYER|PLAYER name|NPC name-or-id]
+        // Accept: HIGHLIGHT_<TYPE> [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET]
         String upper = line.toUpperCase(Locale.ROOT);
         HighlightType type = null;
         if (upper.startsWith("HIGHLIGHT_OUTLINE")) type = HighlightType.OUTLINE;
@@ -61,7 +61,7 @@ public class TickTriggerService {
         else if (upper.startsWith("HIGHLIGHT_HULL")) type = HighlightType.HULL;
         else if (upper.startsWith("HIGHLIGHT_MINIMAP")) type = HighlightType.MINIMAP;
         if (type == null) return;
-        String remainder = line.substring(line.indexOf(' ')+1).trim();
+        String remainder = line.contains(" ")? line.substring(line.indexOf(' ')+1).trim():"";
         com.krisped.commands.highlight.ActiveHighlight.TargetType targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.LOCAL_PLAYER;
         java.util.Set<String> targetNames = null; java.util.Set<Integer> targetIds = null;
         if (!remainder.isEmpty()) {
@@ -77,6 +77,8 @@ public class TickTriggerService {
                     String spec=toks[1];
                     if (spec.matches("\\d+")) { targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.NPC_ID; targetIds=new java.util.HashSet<>(); try { targetIds.add(Integer.parseInt(spec)); } catch(Exception ignored){} }
                     else { targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.NPC_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeName(spec)); }
+                } else if (t0.equals("TARGET")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.TARGET;
                 }
             }
         }
@@ -109,14 +111,15 @@ public class TickTriggerService {
 
     private void upsertPersistentOverheadText(KPWebhookPreset rule, String text, String position, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts) {
         if (text == null || text.isBlank()) return;
-        // Target parsing: [LOCAL_PLAYER|PLAYER name|NPC name-or-id] <message>
+        // Target parsing: [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET] <message>
         String working = text;
         KPWebhookPlugin.ActiveOverheadText.TargetType targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.LOCAL_PLAYER;
         java.util.Set<String> targetNames = null; java.util.Set<Integer> targetIds = null;
         String[] toks = working.split("\\s+",3);
         if (toks.length >=1) {
             String t0 = toks[0].toUpperCase(Locale.ROOT);
-            if (t0.equals("LOCAL_PLAYER")) { working = working.substring(toks[0].length()).trim(); }
+            if (t0.equals("TARGET")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.TARGET; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("LOCAL_PLAYER")) { working = working.substring(toks[0].length()).trim(); }
             else if (t0.equals("PLAYER") && toks.length>=2) { targetType= KPWebhookPlugin.ActiveOverheadText.TargetType.PLAYER_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeName(toks[1])); working = working.substring(toks[0].length()+1+toks[1].length()).trim(); }
             else if (t0.equals("NPC") && toks.length>=2) {
                 String spec=toks[1];
@@ -149,7 +152,6 @@ public class TickTriggerService {
             if (t.getRuleId() != rule.getId()) continue;
             if (!position.equals(t.getPosition())) continue;
             if (t.getTargetType() != targetType) continue;
-            // compare sets (order independent)
             boolean namesEqual = (t.getTargetNames()==null||t.getTargetNames().isEmpty()) == (targetNames==null||targetNames.isEmpty());
             if (namesEqual && t.getTargetNames()!=null && targetNames!=null) namesEqual = t.getTargetNames().equals(targetNames);
             if (!namesEqual) continue;
@@ -183,7 +185,6 @@ public class TickTriggerService {
             existing.setColor(color); existing.setSize(size); existing.setBlink(blink); existing.setBold(bold); existing.setItalic(italic); existing.setUnderline(underline);
             existing.setPersistent(true); existing.setRemainingTicks(0);
             existing.setRuleId(rule.getId());
-            // Preserve existing blinkCounter / visiblePhase to allow smooth blinking; only reset interval if blink flag changed
             existing.setBlinkInterval(blink? (existing.getBlinkInterval()>0? existing.getBlinkInterval():2):0);
         }
     }

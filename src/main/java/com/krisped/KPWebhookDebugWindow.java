@@ -22,7 +22,7 @@ public class KPWebhookDebugWindow extends JFrame {
     private int totalRows = 0;
     private static final int MAX_ROWS = 800;
 
-    private static final String[] TRIGGERS = {"MESSAGE","WIDGET","PLAYER_SPAWN","PLAYER_DESPAWN","VARBIT","STAT","NPC_SPAWN","NPC_DESPAWN"};
+    private static final String[] TRIGGERS = {"MESSAGE","WIDGET","PLAYER_SPAWN","PLAYER_DESPAWN","VARBIT","STAT","NPC_SPAWN","NPC_DESPAWN","HITSPLAT_SELF","HITSPLAT_TARGET"};
     private final Set<String> selectedTriggers = new LinkedHashSet<>(); // now: actual selected set (empty = none)
     private final MultiSelectCombo triggerCombo;
     private final TableRowSorter<DefaultTableModel> sorter;
@@ -180,6 +180,7 @@ public class KPWebhookDebugWindow extends JFrame {
     public void logVarbit(int id, int value) { logRow("VARBIT", String.valueOf(id), "", "value="+value, ""); }
     public void logStat(String skillName, int real, int boosted) { logRow("STAT", skillName, "", "real="+real+" boost="+boosted, ""); }
     public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), name, "cmb="+combat, ""); }
+    public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", actorName, "dmg="+amount, ""); }
 
     private void logRow(String trigger, String id, String player, String val, String chatType) {
         if (!acceptsTrigger(trigger) || !isDisplayable()) return;
