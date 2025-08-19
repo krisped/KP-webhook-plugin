@@ -31,7 +31,10 @@ public class KPWebhookPreset
         VARBIT,
         VARPLAYER,
         TICK,
-        TARGET
+        TARGET,
+        PROJECTILE_SELF, // new
+        PROJECTILE_TARGET, // new
+        PROJECTILE_ANY // new
     }
 
     public enum StatMode
@@ -153,6 +156,15 @@ public class KPWebhookPreset
         private java.util.List<String> npcNames; // lower-case underscore names
     }
 
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ProjectileConfig {
+        private Integer projectileId; // id to match (required)
+    }
+
     @Builder.Default
     private int id = -1;
 
@@ -169,6 +181,7 @@ public class KPWebhookPreset
     private VarbitConfig varbitConfig;
     private VarplayerConfig varplayerConfig;
     private NpcConfig npcConfig; // new optional npc config
+    private ProjectileConfig projectileConfig; // new projectile config
 
     private String webhookUrl;
     @Builder.Default
@@ -328,7 +341,7 @@ public class KPWebhookPreset
         if (triggerType == null) return "?";
         switch (triggerType) {
             case MANUAL: return "Manual";
-            case TARGET: return "TARGET (current)";
+            case TARGET: return "TICK (continuous)";
             case TICK: return "TICK (continuous)";
             case STAT:
                 if (statConfig == null || statConfig.getSkill()==null) return "STAT ?";
@@ -361,12 +374,19 @@ public class KPWebhookPreset
             case ANIMATION_TARGET:
                 if (animationConfig==null || animationConfig.getAnimationId()==null) return "ANIMATION_TARGET ?";
                 return "ANIMATION_TARGET "+animationConfig.getAnimationId();
-            case ANIMATION_ANY: return "ANIMATION_ANY";
+            case ANIMATION_ANY: return "ANIMATION_ANY (alle animasjoner)";
             case GRAPHIC_SELF:
                 if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_SELF ?"; return "GRAPHIC_SELF "+graphicConfig.getGraphicId();
             case GRAPHIC_TARGET:
                 if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_TARGET ?"; return "GRAPHIC_TARGET "+graphicConfig.getGraphicId();
-            case GRAPHIC_ANY: return "GRAPHIC_ANY";
+            case GRAPHIC_ANY: return "GRAPHIC_ANY (alle graphics)";
+            case PROJECTILE_SELF:
+                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_SELF ?"; return "PROJECTILE_SELF "+projectileConfig.getProjectileId();
+            case PROJECTILE_TARGET:
+                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_TARGET ?"; return "PROJECTILE_TARGET "+projectileConfig.getProjectileId();
+            case PROJECTILE_ANY:
+                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_ANY ?";
+                return "PROJECTILE_ANY "+projectileConfig.getProjectileId();
             case HITSPLAT_SELF:
                 if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
                 return "HITSPLAT_SELF "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
@@ -421,4 +441,3 @@ public class KPWebhookPreset
         }
     }
 }
-

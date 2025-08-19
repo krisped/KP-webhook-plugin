@@ -47,8 +47,8 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
-        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat"}
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile"}
 )
 public class KPWebhookPlugin extends Plugin
 {
@@ -99,6 +99,9 @@ public class KPWebhookPlugin extends Plugin
     private int lastLocalAnimationId = -1; // new: track local animation
     private static final int TARGET_RETENTION_TICKS = 50; // ~30s retention (50 * 0.6s)
     // === End target tracking state ===
+
+    // Projectile tracking (dedupe so we only fire once per projectile instance)
+    private final java.util.Set<Integer> seenProjectiles = new java.util.HashSet<>();
 
     // Overhead text rendering state
     @Data
@@ -246,46 +249,22 @@ public class KPWebhookPlugin extends Plugin
     public void onGameTick(GameTick tick)
     {
         gameTickCounter++;
+        // Reset seen projectiles each tick to prevent memory growth and allow new projectiles to trigger
+        seenProjectiles.clear();
         updateAndProcessTarget();
-        // Self animation change detection
-        try {
-            Player local = client.getLocalPlayer();
-            if (local != null) {
-                int anim = local.getAnimation();
-                if (anim != lastLocalAnimationId) {
-                    lastLocalAnimationId = anim;
-                    if (debugWindow != null && debugWindow.isVisible()) {
-                        try { debugWindow.logAnimationActor("ANIMATION_SELF", local, anim); debugWindow.logAnimationActor("ANIMATION_ANY", local, anim); } catch (Exception ignored) {}
-                    }
-                    fireSelfAnimationTriggers(anim);
-                    // ANY handled in AnimationChanged event now
-                }
-            } else {
-                lastLocalAnimationId = -1;
-            }
-        } catch (Exception ignored) {}
-        // Self graphic change detection
-        try {
-            Player local = client.getLocalPlayer();
-            if (local != null) {
-                int g = local.getGraphic();
-                if (g != lastLocalGraphicId) {
-                    lastLocalGraphicId = g;
-                    if (debugWindow != null && debugWindow.isVisible()) {
-                        try { debugWindow.logGraphicActor("GRAPHIC_SELF", local, g); debugWindow.logGraphicActor("GRAPHIC_ANY", local, g); } catch (Exception ignored) {}
-                    }
-                    fireSelfGraphicTriggers(g);
-                    // ANY handled in GraphicChanged event now
-                }
-            } else {
-                lastLocalGraphicId = -1;
-            }
-        } catch (Exception ignored) {}
-
+        // Removed self animation & graphic change detection here to avoid double firing.
+        // AnimationChanged and GraphicChanged event subscribers now handle all animation/graphic triggers.
         // Continuous TICK trigger processing via service
         if (tickTriggerService != null)
         {
             tickTriggerService.process(rules, overheadTexts);
+            if (debugWindow != null && debugWindow.isVisible()) {
+                for (KPWebhookPreset r : rules) {
+                    if (r != null && r.isActive() && r.getTriggerType()== KPWebhookPreset.TriggerType.TICK) {
+                        try { debugWindow.logTickRule(r.getId(), r.getTitle()); } catch (Exception ignored) {}
+                    }
+                }
+            }
         }
 
         // Process sequences (delays and actions)
@@ -449,61 +428,14 @@ public class KPWebhookPlugin extends Plugin
                     try { lastTargetGraphicId = currentTarget.getGraphic(); } catch (Exception ignored) { lastTargetGraphicId = -1; }
                     targetLastActiveTick = gameTickCounter; // refresh on new acquisition
                 }
-                // Fire change trigger only when new target acquired or old explicitly lost (we still allow existing behavior)
+                // Fire change trigger only when new target acquired or old explicitly lost
                 fireTargetChangeTriggers(old, currentTarget);
             } else if (interacting != null) {
                 // still interacting with attackable entity -> refresh activity timer
                 targetLastActiveTick = gameTickCounter;
             }
-            // Animation change for target
-            if (currentTarget != null) {
-                int anim = currentTarget.getAnimation();
-                if (anim != lastTargetAnimationId) {
-                    lastTargetAnimationId = anim;
-                    if (debugWindow != null && debugWindow.isVisible()) {
-                        try { debugWindow.logAnimationActor("ANIMATION_TARGET", currentTarget, anim); debugWindow.logAnimationActor("ANIMATION_ANY", currentTarget, anim); } catch (Exception ignored) {}
-                    }
-                    fireTargetAnimationTriggers(anim);
-                    // ANY handled globally
-                }
-                try {
-                    int g = currentTarget.getGraphic();
-                    if (g != lastTargetGraphicId) {
-                        lastTargetGraphicId = g;
-                        if (debugWindow != null && debugWindow.isVisible()) {
-                            try { debugWindow.logGraphicActor("GRAPHIC_TARGET", currentTarget, g); debugWindow.logGraphicActor("GRAPHIC_ANY", currentTarget, g); } catch (Exception ignored) {}
-                        }
-                        fireTargetGraphicTriggers(g);
-                        // ANY handled globally
-                    }
-                } catch (Exception ignored) {}
-            }
+            // Removed manual target animation & graphic change detection to avoid duplicate rule firing.
         } catch (Exception ignored) {}
-    }
-
-    private void fireSelfAnimationTriggers(int newAnim) {
-        for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_SELF) continue;
-            KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
-            if (cfg == null || cfg.getAnimationId() == null) continue;
-            if (cfg.getAnimationId() == newAnim) {
-                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
-            }
-        }
-    }
-    private void fireAnyAnimationTriggers(int newAnim, boolean self, boolean target) {
-        if (!self && !target) return;
-        for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_ANY) continue;
-            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (target && currentTarget instanceof Player)?(Player)currentTarget:null, (target && currentTarget instanceof NPC)?(NPC)currentTarget:null);
-        }
-    }
-    private void fireAnyGraphicTriggers(int newGraphic, boolean self, boolean target) {
-        if (!self && !target) return;
-        for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.GRAPHIC_ANY) continue;
-            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (target && currentTarget instanceof Player)?(Player)currentTarget:null, (target && currentTarget instanceof NPC)?(NPC)currentTarget:null);
-        }
     }
 
     // === Added missing helper methods for graphics / target handling ===
@@ -539,6 +471,12 @@ public class KPWebhookPlugin extends Plugin
     }
     private void fireTargetChangeTriggers(Actor oldTarget, Actor newTarget) {
         if (oldTarget == newTarget) return; // no change
+        // Debug log target change
+        if (debugWindow != null && debugWindow.isVisible()) {
+            String oldName = (oldTarget instanceof Player)? sanitizePlayerName(((Player)oldTarget).getName()) : (oldTarget instanceof NPC)? sanitizeNpcName(((NPC)oldTarget).getName()):"";
+            String newName = (newTarget instanceof Player)? sanitizePlayerName(((Player)newTarget).getName()) : (newTarget instanceof NPC)? sanitizeNpcName(((NPC)newTarget).getName()):"";
+            try { debugWindow.logTargetChange(oldName, newName); } catch (Exception ignored) {}
+        }
         for (KPWebhookPreset r : getRules()) {
             if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.TARGET) continue;
             executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (newTarget instanceof Player)?(Player)newTarget:null, (newTarget instanceof NPC)?(NPC)newTarget:null);
@@ -571,13 +509,15 @@ public class KPWebhookPlugin extends Plugin
         try {
             Actor a = ev.getActor(); if (a == null) return;
             int anim = a.getAnimation();
-            // Skip if self/target already processed in tick? still log for completeness
             if (debugWindow != null && debugWindow.isVisible()) {
-                debugWindow.logAnimationActor("ANIMATION_ANY", a, anim);
-                if (a == client.getLocalPlayer()) debugWindow.logAnimationActor("ANIMATION_SELF", a, anim);
-                else if (a == currentTarget) debugWindow.logAnimationActor("ANIMATION_TARGET", a, anim);
+                if (a == client.getLocalPlayer()) {
+                    debugWindow.logAnimationActor("ANIMATION_SELF", a, anim);
+                } else if (a == currentTarget) {
+                    debugWindow.logAnimationActor("ANIMATION_TARGET", a, anim);
+                } else {
+                    debugWindow.logAnimationActor("ANIMATION_ANY", a, anim);
+                }
             }
-            // Fire ANY presets
             for (KPWebhookPreset r : getRules()) {
                 if (!r.isActive()) continue;
                 if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_ANY) {
@@ -601,9 +541,13 @@ public class KPWebhookPlugin extends Plugin
             Actor a = ev.getActor(); if (a == null) return;
             int g = a.getGraphic();
             if (debugWindow != null && debugWindow.isVisible()) {
-                debugWindow.logGraphicActor("GRAPHIC_ANY", a, g);
-                if (a == client.getLocalPlayer()) debugWindow.logGraphicActor("GRAPHIC_SELF", a, g);
-                else if (a == currentTarget) debugWindow.logGraphicActor("GRAPHIC_TARGET", a, g);
+                if (a == client.getLocalPlayer()) {
+                    debugWindow.logGraphicActor("GRAPHIC_SELF", a, g);
+                } else if (a == currentTarget) {
+                    debugWindow.logGraphicActor("GRAPHIC_TARGET", a, g);
+                } else {
+                    debugWindow.logGraphicActor("GRAPHIC_ANY", a, g);
+                }
             }
             for (KPWebhookPreset r : getRules()) {
                 if (!r.isActive()) continue;
@@ -623,6 +567,58 @@ public class KPWebhookPlugin extends Plugin
     }
     // === End global subscribers ===
 
+    @Subscribe
+    public void onProjectileMoved(ProjectileMoved ev) {
+        try {
+            Projectile p = ev.getProjectile();
+            if (p == null) return;
+            int id = p.getId();
+            int identity = System.identityHashCode(p);
+            if (!seenProjectiles.add(identity)) return; // first encounter only
+            Actor projTarget = null;
+            try { projTarget = p.getInteracting(); } catch (Exception ignored) {}
+            Player local = client.getLocalPlayer();
+            // Debug logging (so user can see projectile ids & categorize)
+            if (debugWindow != null && debugWindow.isVisible()) {
+                try {
+                    if (projTarget == currentTarget && currentTarget != null) {
+                        debugWindow.logProjectile("PROJECTILE_SELF", p, projTarget);
+                    } else if (projTarget == local && local != null) {
+                        debugWindow.logProjectile("PROJECTILE_TARGET", p, projTarget);
+                    }
+                    debugWindow.logProjectile("PROJECTILE_ANY", p, projTarget);
+                } catch (Exception ignored) {}
+            }
+            for (KPWebhookPreset r : getRules()) {
+                if (!r.isActive()) continue;
+                KPWebhookPreset.TriggerType tt = r.getTriggerType();
+                if (tt != KPWebhookPreset.TriggerType.PROJECTILE_ANY &&
+                    tt != KPWebhookPreset.TriggerType.PROJECTILE_SELF &&
+                    tt != KPWebhookPreset.TriggerType.PROJECTILE_TARGET) continue;
+                KPWebhookPreset.ProjectileConfig pc = r.getProjectileConfig();
+                if (pc == null) continue; // must exist
+                Integer want = pc.getProjectileId();
+                switch (tt) {
+                    case PROJECTILE_ANY:
+                        // Optional id filter: if unset => match all, else match specific id
+                        if (want == null || want == id) {
+                            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                        }
+                        break;
+                    case PROJECTILE_SELF: // projectile whose target matches currentTarget (id required)
+                        if (want != null && want == id && projTarget != null && projTarget == currentTarget) {
+                            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (currentTarget instanceof Player)?(Player)currentTarget:null, (currentTarget instanceof NPC)?(NPC)currentTarget:null);
+                        }
+                        break;
+                    case PROJECTILE_TARGET: // projectile targeting local player (id required)
+                        if (want != null && want == id && projTarget != null && projTarget == local) {
+                            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                        }
+                        break;
+                }
+            }
+        } catch (Exception ignored) {}
+    }
 
     @Subscribe
     public void onVarbitChanged(VarbitChanged ev)
@@ -848,6 +844,9 @@ public class KPWebhookPlugin extends Plugin
         KPWebhookPreset r = find(id);
         if (r!=null)
         {
+            if (debugWindow != null && debugWindow.isVisible()) {
+                try { debugWindow.logManual(r.getId(), r.getTitle()); } catch (Exception ignored) {}
+            }
             executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
         }
     }

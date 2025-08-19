@@ -1,6 +1,10 @@
 package com.krisped;
 
 import net.runelite.api.ChatMessageType;
+import net.runelite.api.AnimationID; // added
+import net.runelite.api.GraphicID; // added
+import net.runelite.api.Projectile; // new
+import net.runelite.api.Actor; // new
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -10,6 +14,7 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.lang.reflect.Modifier;
 import java.util.*;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,16 +30,22 @@ public class KPWebhookDebugWindow extends JFrame {
     private static final int MAX_ROWS = 800;
 
     private static final String[] TRIGGERS = {
-            // Alphabetical list
+            // Alphabetical list (extended with projectile and new core triggers)
             "ANIMATION_ANY","ANIMATION_SELF","ANIMATION_TARGET",
             "GRAPHIC_ANY","GRAPHIC_SELF","GRAPHIC_TARGET",
             "HITSPLAT_SELF","HITSPLAT_TARGET",
+            "MANUAL", // new
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
-            "STAT","VARBIT","VARPLAYER","WIDGET"
+            "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
+            "STAT","TARGET","TICK","VARBIT","VARPLAYER","WIDGET" // added TARGET & TICK
     };
     private final Set<String> selectedTriggers = new LinkedHashSet<>();
     private final MultiSelectCombo triggerCombo;
     private final TableRowSorter<DefaultTableModel> sorter;
+
+    private Map<Integer,String> animationNames = Collections.emptyMap();
+    private Map<Integer,String> graphicNames = Collections.emptyMap();
+    private Map<Integer,String> projectileNames = Collections.emptyMap(); // stays empty (no constant class)
 
     public KPWebhookDebugWindow(KPWebhookPlugin plugin) {
         super("KP Webhook Debug");
@@ -43,14 +54,14 @@ public class KPWebhookDebugWindow extends JFrame {
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(6,6));
 
-        // New professional layout: Trigger | ID | Type (with embedded value) | Name
+        // New professional layout WITHOUT Desc column now: Trigger | ID | Type | Name
         String[] cols = {"Trigger","ID","Type","Name"};
         model = new DefaultTableModel(cols, 0) { @Override public boolean isCellEditable(int r,int c){ return false; } };
         table = new JTable(model);
         sorter = new TableRowSorter<>(model); // initialize sorter before using
         table.setRowSorter(sorter);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        int[] widths = {140,110,300,360};
+        int[] widths = {140,110,300,360}; // matches 4 columns now
         for (int i=0;i<widths.length;i++) table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         // Adjust table look for clearer row separation
         table.setShowHorizontalLines(false);
@@ -79,6 +90,8 @@ public class KPWebhookDebugWindow extends JFrame {
         };
         for (int i=0;i<table.getColumnCount();i++) table.getColumnModel().getColumn(i).setCellRenderer(striped);
         add(new JScrollPane(table), BorderLayout.CENTER);
+        // build name maps after UI
+        buildNameMaps();
 
         JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 6,4));
         selectedTriggers.addAll(Arrays.asList(TRIGGERS));
@@ -105,6 +118,31 @@ public class KPWebhookDebugWindow extends JFrame {
         top.add(countLabel);
         add(top, BorderLayout.NORTH);
     }
+
+    private void buildNameMaps() {
+        animationNames = buildConstantIndex(AnimationID.class);
+        graphicNames = buildConstantIndex(GraphicID.class);
+        projectileNames = Collections.emptyMap(); // no projectile constant ids available
+    }
+    private Map<Integer,String> buildConstantIndex(Class<?> cls) {
+        Map<Integer,String> map = new HashMap<>();
+        for (var f : cls.getDeclaredFields()) {
+            if (f.getType()==int.class && Modifier.isStatic(f.getModifiers())) {
+                try {
+                    if (!f.canAccess(null)) {
+                        try { f.setAccessible(true); } catch (Exception ignored) {}
+                    }
+                    int val = f.getInt(null);
+                    // Keep first encountered name for a value (avoid later duplicates replacing a more meaningful earlier one)
+                    map.putIfAbsent(val, f.getName());
+                } catch (Exception ignored) {}
+            }
+        }
+        return map;
+    }
+    private String animDesc(int id){ return animationNames.getOrDefault(id, ""); }
+    private String graphicDesc(int id){ return graphicNames.getOrDefault(id, ""); }
+    private String projectileDesc(int id){ return projectileNames.getOrDefault(id, ""); } // will be empty
 
     /* ================= Multi-select Combo ================= */
     private static class MultiSelectCombo extends JPanel {
@@ -135,49 +173,60 @@ public class KPWebhookDebugWindow extends JFrame {
 
     /* ================= Public logging API ================= */
     public void addMessage(ChatMessageType type, int typeId, String player, String value, String raw) {
-        logRow("MESSAGE", typeId>=0?String.valueOf(typeId):"", type.name(), nz(player));
+        logRow("MESSAGE", typeId>=0?String.valueOf(typeId):"", type.name(), nz(player), "");
     }
-    public void logPlayerSpawn(boolean despawn, String name, int combat) { logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", "", "PLAYER", nz(name)); }
-    public void logWidget(int groupId, Integer childId) { logRow("WIDGET", childId==null?String.valueOf(groupId):groupId+":"+childId, "WIDGET", ""); }
-    public void logVarbit(int id, int value) { logRow("VARBIT", String.valueOf(id), String.valueOf(value), ""); }
-    public void logVarplayer(int id, int value) { logRow("VARPLAYER", String.valueOf(id), String.valueOf(value), ""); }
-    public void logStat(String skillName, int real, int boosted) { logRow("STAT", "", skillName, skillName); }
-    public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name)); }
-    public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", self?"PLAYER":"NPC", nz(actorName)); }
+    public void logPlayerSpawn(boolean despawn, String name, int combat) { logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", "", "PLAYER", nz(name), ""); }
+    public void logWidget(int groupId, Integer childId) { logRow("WIDGET", childId==null?String.valueOf(groupId):groupId+":"+childId, "WIDGET", "", ""); }
+    public void logVarbit(int id, int value) { logRow("VARBIT", String.valueOf(id), String.valueOf(value), "", ""); }
+    public void logVarplayer(int id, int value) { logRow("VARPLAYER", String.valueOf(id), String.valueOf(value), "", ""); }
+    public void logStat(String skillName, int real, int boosted) { logRow("STAT", "", skillName, skillName, ""); }
+    public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name), ""); }
+    public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", self?"PLAYER":"NPC", nz(actorName), "dmg="+amount); }
     public void logAnimation(boolean self, boolean target, int animId) {
         String trig = self? (target?"ANIMATION_ANY":"ANIMATION_SELF") : (target?"ANIMATION_TARGET":"ANIMATION_ANY");
         if (!self && !target) trig = "ANIMATION_ANY";
-        logRow(trig, String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "");
-        if (!"ANIMATION_ANY".equals(trig)) logRow("ANIMATION_ANY", String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "");
+        logRow(trig, String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "", animDesc(animId));
+        if (!"ANIMATION_ANY".equals(trig)) logRow("ANIMATION_ANY", String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "", animDesc(animId));
     }
     public void logGraphic(boolean self, boolean target, int graphicId) {
         String trig = self? (target?"GRAPHIC_ANY":"GRAPHIC_SELF") : (target?"GRAPHIC_TARGET":"GRAPHIC_ANY");
         if (!self && !target) trig = "GRAPHIC_ANY";
-        logRow(trig, String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "");
-        if (!"GRAPHIC_ANY".equals(trig)) logRow("GRAPHIC_ANY", String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "");
+        logRow(trig, String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "", graphicDesc(graphicId));
+        if (!"GRAPHIC_ANY".equals(trig)) logRow("GRAPHIC_ANY", String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "", graphicDesc(graphicId));
+    }
+    public void logProjectile(String trigger, Projectile p, Actor target) { // new
+        if (p == null) return;
+        String tgtType = ""; String tgtName = "";
+        if (target instanceof net.runelite.api.Player) { tgtType = "PLAYER"; try { tgtName = ((net.runelite.api.Player)target).getName(); } catch (Exception ignored) {} }
+        else if (target instanceof net.runelite.api.NPC) { tgtType = "NPC"; try { tgtName = ((net.runelite.api.NPC)target).getName(); } catch (Exception ignored) {} }
+        logRow(trigger, String.valueOf(p.getId()), tgtType.isEmpty()?"PROJECTILE":tgtType, nz(tgtName), projectileDesc(p.getId()));
     }
     public void logAnimationActor(String trigger, net.runelite.api.Actor a, int animId) {
         if (a == null) return; String type = a instanceof net.runelite.api.NPC?"NPC": a instanceof net.runelite.api.Player?"PLAYER":"";
-        String name = ""; String idCol = String.valueOf(animId); // ID = animation id here
-        try {
-            if (a instanceof net.runelite.api.NPC) { name=((net.runelite.api.NPC)a).getName(); }
-            else if (a instanceof net.runelite.api.Player) { name=((net.runelite.api.Player)a).getName(); }
-        } catch (Exception ignored) {}
-        logRow(trigger, idCol, type, nz(name));
+        String name = ""; String idCol = String.valueOf(animId);
+        try { if (a instanceof net.runelite.api.NPC) { name=((net.runelite.api.NPC)a).getName(); } else if (a instanceof net.runelite.api.Player) { name=((net.runelite.api.Player)a).getName(); } } catch (Exception ignored) {}
+        logRow(trigger, idCol, type, nz(name), animDesc(animId));
     }
     public void logGraphicActor(String trigger, net.runelite.api.Actor a, int graphicId) {
         if (a == null) return; String type = a instanceof net.runelite.api.NPC?"NPC": a instanceof net.runelite.api.Player?"PLAYER":"";
-        String name = ""; String idCol = String.valueOf(graphicId); // ID = graphic id here
-        try {
-            if (a instanceof net.runelite.api.NPC) { name=((net.runelite.api.NPC)a).getName(); }
-            else if (a instanceof net.runelite.api.Player) { name=((net.runelite.api.Player)a).getName(); }
-        } catch (Exception ignored) {}
-        logRow(trigger, idCol, type, nz(name));
+        String name = ""; String idCol = String.valueOf(graphicId);
+        try { if (a instanceof net.runelite.api.NPC) { name=((net.runelite.api.NPC)a).getName(); } else if (a instanceof net.runelite.api.Player) { name=((net.runelite.api.Player)a).getName(); } } catch (Exception ignored) {}
+        logRow(trigger, idCol, type, nz(name), graphicDesc(graphicId));
     }
+    public void logManual(int ruleId, String title) { logRow("MANUAL", String.valueOf(ruleId), "", nz(title), ""); }
+    public void logTargetChange(String oldName, String newName) {
+        if (newName!=null && !newName.isBlank()) {
+            logRow("TARGET", "", "", nz(newName), "");
+        } else {
+            logRow("TARGET", "", "", "(lost)", "");
+        }
+    }
+    public void logTickRule(int ruleId, String title) { logRow("TICK", String.valueOf(ruleId), "", nz(title), ""); }
 
     private String build(String base, String detail) { return detail==null||detail.isBlank()? base : base+" "+detail; }
 
-    private void logRow(String trigger, String id, String type, String name) {
+    private void logRow(String trigger, String id, String type, String name, String desc) {
+        // Desc ignored (column removed)
         if (!acceptsTrigger(trigger) || !isDisplayable()) return;
         SwingUtilities.invokeLater(() -> {
             if (totalRows >= MAX_ROWS) {

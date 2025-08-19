@@ -58,6 +58,9 @@ public class KPWebhookPresetDialog extends JDialog
     // Graphic trigger components (reuse animationCard style)
     private JPanel graphicCard; // new
     private JTextField graphicIdField; // new
+    // Projectile trigger components
+    private JPanel projectileCard; // new
+    private JTextField projectileIdField; // new
     // Hitsplat trigger components
     private JPanel hitsplatCard; // new
     private JComboBox<String> hitsplatModeBox; // new
@@ -422,6 +425,9 @@ public class KPWebhookPresetDialog extends JDialog
         triggerDesc.put("GRAPHIC_ANY","Any graphic (self or target) change");
         triggerDesc.put("GRAPHIC_SELF","Local player graphic id");
         triggerDesc.put("GRAPHIC_TARGET","Current target graphic id");
+        triggerDesc.put("PROJECTILE_ANY","Any projectile (optional id filter)"); // new
+        triggerDesc.put("PROJECTILE_SELF","Projectile towards current target (id)"); // new
+        triggerDesc.put("PROJECTILE_TARGET","Projectile towards you (id)"); // new
         triggerDesc.put("HITSPLAT_SELF","Damage you take (conditional)");
         triggerDesc.put("HITSPLAT_TARGET","Damage your target takes (conditional)");
         triggerDesc.put("MANUAL","Manual trigger");
@@ -591,6 +597,13 @@ public class KPWebhookPresetDialog extends JDialog
         } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.GRAPHIC_TARGET && r.getGraphicConfig()!=null) {
             graphicIdField.setText(String.valueOf(r.getGraphicConfig().getGraphicId()));
         }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE_SELF && r.getProjectileConfig()!=null) { // new
+            projectileIdField.setText(String.valueOf(r.getProjectileConfig().getProjectileId()));
+        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE_TARGET && r.getProjectileConfig()!=null) {
+            projectileIdField.setText(String.valueOf(r.getProjectileConfig().getProjectileId()));
+        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE_ANY && r.getProjectileConfig()!=null) {
+            projectileIdField.setText(String.valueOf(r.getProjectileConfig().getProjectileId()));
+        }
         if ((r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_SELF || r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_TARGET)) { // renamed
             KPWebhookPreset.HitsplatConfig hc = r.getHitsplatConfig();
             if (hc == null) {
@@ -651,6 +664,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.VarbitConfig varbitCfg = null;
         KPWebhookPreset.VarplayerConfig varplayerCfg = null;
         KPWebhookPreset.NpcConfig npcCfg = null; // new
+        KPWebhookPreset.ProjectileConfig projectileCfg = null; // new
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -720,6 +734,26 @@ public class KPWebhookPresetDialog extends JDialog
             try { gid = Integer.parseInt(graphicIdField.getText().trim()); }
             catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid graphic ID"); return; }
             graphicCfg = KPWebhookPreset.GraphicConfig.builder().graphicId(gid).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.PROJECTILE_SELF || trig == KPWebhookPreset.TriggerType.PROJECTILE_TARGET || trig == KPWebhookPreset.TriggerType.PROJECTILE_ANY) { // new
+            String raw = projectileIdField.getText()!=null? projectileIdField.getText().trim():"";
+            if (trig == KPWebhookPreset.TriggerType.PROJECTILE_ANY) {
+                // Optional filter: blank => match all ids
+                if (raw.isEmpty()) {
+                    projectileCfg = KPWebhookPreset.ProjectileConfig.builder().projectileId(null).build();
+                } else {
+                    int pid;
+                    try { pid = Integer.parseInt(raw); }
+                    catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid projectile ID"); return; }
+                    projectileCfg = KPWebhookPreset.ProjectileConfig.builder().projectileId(pid).build();
+                }
+            } else { // SELF / TARGET require id
+                if (raw.isEmpty()) { JOptionPane.showMessageDialog(this, "Projectile ID is required for "+trig.name()); return; }
+                int pid;
+                try { pid = Integer.parseInt(raw); }
+                catch (NumberFormatException e) { JOptionPane.showMessageDialog(this, "Invalid projectile ID"); return; }
+                projectileCfg = KPWebhookPreset.ProjectileConfig.builder().projectileId(pid).build();
+            }
         }
         else if (trig == KPWebhookPreset.TriggerType.HITSPLAT_SELF || trig == KPWebhookPreset.TriggerType.HITSPLAT_TARGET) { // renamed
             Integer val = (Integer) hitsplatValueSpinner.getValue();
@@ -842,7 +876,8 @@ public class KPWebhookPresetDialog extends JDialog
                 .messageConfig(messageCfg)
                 .varbitConfig(varbitCfg)
                 .varplayerConfig(varplayerCfg)
-                .hitsplatConfig(hitsplatCfg);
+                .hitsplatConfig(hitsplatCfg)
+                .projectileConfig(projectileCfg);
 
         result = b.build();
         dispose();
@@ -1323,6 +1358,16 @@ public class KPWebhookPresetDialog extends JDialog
         gfc.gridx=0; gfc.gridy=gfy; gfc.weightx=0; graphicCard.add(new JLabel("Graphic ID"), gfc);
         graphicIdField = new JTextField();
         gfc.gridx=1; gfc.weightx=1; graphicCard.add(graphicIdField, gfc); gfy++;
+        // PROJECTILE card (similar to animation)
+        projectileCard = new JPanel(new GridBagLayout());
+        GridBagConstraints prc = new GridBagConstraints();
+        prc.insets = new Insets(4,4,4,4);
+        prc.fill = GridBagConstraints.HORIZONTAL;
+        prc.anchor = GridBagConstraints.WEST; prc.weightx=1; int pry=0;
+        prc.gridx=0; prc.gridy=pry; prc.weightx=0; projectileCard.add(new JLabel("Projectile ID (SELF/TARGET krever, ANY valgfri)"), prc);
+        projectileIdField = new JTextField();
+        projectileIdField.setToolTipText("ID på projectile. Påkrevd for PROJECTILE_SELF og PROJECTILE_TARGET. Valgfri for PROJECTILE_ANY (tom = alle).");
+        prc.gridx=1; prc.weightx=1; projectileCard.add(projectileIdField, prc); pry++;
         // HITSPLAT card
         hitsplatCard = new JPanel(new GridBagLayout());
         GridBagConstraints hs = new GridBagConstraints();
@@ -1405,6 +1450,9 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); // share same animation id field
         cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_SELF.name()); // new
         cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); // new
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_SELF.name()); // new
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name()); // new
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_ANY.name()); // new
         cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_SELF.name()); // renamed
         cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name()); // renamed
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
@@ -1421,9 +1469,7 @@ public class KPWebhookPresetDialog extends JDialog
         if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) ||
                 KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) ||
                 KPWebhookPreset.TriggerType.TICK.name().equals(sel) ||
-                KPWebhookPreset.TriggerType.TARGET.name().equals(sel) ||
-                KPWebhookPreset.TriggerType.ANIMATION_ANY.name().equals(sel) ||
-                KPWebhookPreset.TriggerType.GRAPHIC_ANY.name().equals(sel))
+                KPWebhookPreset.TriggerType.TARGET.name().equals(sel))
         {
             cl.show(triggerCards, "NONE");
         }
@@ -1435,12 +1481,28 @@ public class KPWebhookPresetDialog extends JDialog
         {
             cl.show(triggerCards, "NPC");
         }
+        else if (KPWebhookPreset.TriggerType.PROJECTILE_SELF.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.PROJECTILE_ANY.name().equals(sel)) {
+            // All projectile variants share same card; show TARGET key which is the registered card
+            cl.show(triggerCards, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name());
+        }
+        else if (KPWebhookPreset.TriggerType.ANIMATION_SELF.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.ANIMATION_TARGET.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.ANIMATION_ANY.name().equals(sel)) {
+            // All animation variants share same card; show TARGET key which is the registered card
+            cl.show(triggerCards, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name());
+        }
+        else if (KPWebhookPreset.TriggerType.GRAPHIC_SELF.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name().equals(sel) ||
+                 KPWebhookPreset.TriggerType.GRAPHIC_ANY.name().equals(sel)) {
+            // All graphic variants share same card; show TARGET key which is the registered card
+            cl.show(triggerCards, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name());
+        }
         else
         {
             String cardKey = sel;
-            if (KPWebhookPreset.TriggerType.ANIMATION_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.ANIMATION_TARGET.name();
-            else if (KPWebhookPreset.TriggerType.GRAPHIC_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name();
-            else if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
+            if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
             cl.show(triggerCards, cardKey);
         }
         if (triggerDetailsPanel != null && !triggerDetailsPanel.isVisible())
