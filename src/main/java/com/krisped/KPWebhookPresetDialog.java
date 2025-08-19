@@ -128,7 +128,7 @@ public class KPWebhookPresetDialog extends JDialog
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
             "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id>\n" +
             "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
-            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}}\n" +
+            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}} $HITSPLAT_SELF $HITSPLAT_TARGET\n" +
             "\n" +
             "NOTIFY You gained a level in {{stat}}\n" +
             "HIGHLIGHT_OUTLINE TARGET\n" +
@@ -416,12 +416,14 @@ public class KPWebhookPresetDialog extends JDialog
         String skillTokens = String.join(", ", skillList);
         // Trigger descriptions mapping
         java.util.Map<String,String> triggerDesc = new java.util.HashMap<>();
+        triggerDesc.put("ANIMATION_ANY","Any animation (self or target) change");
         triggerDesc.put("ANIMATION_SELF","Local player animation id");
         triggerDesc.put("ANIMATION_TARGET","Current target animation id");
-        triggerDesc.put("GRAPHIC_SELF","Local player graphic id"); // new
-        triggerDesc.put("GRAPHIC_TARGET","Current target graphic id"); // new
-        triggerDesc.put("HITSPLAT_SELF","Damage you take (conditional)"); // renamed
-        triggerDesc.put("HITSPLAT_TARGET","Damage your target takes (conditional)"); // renamed
+        triggerDesc.put("GRAPHIC_ANY","Any graphic (self or target) change");
+        triggerDesc.put("GRAPHIC_SELF","Local player graphic id");
+        triggerDesc.put("GRAPHIC_TARGET","Current target graphic id");
+        triggerDesc.put("HITSPLAT_SELF","Damage you take (conditional)");
+        triggerDesc.put("HITSPLAT_TARGET","Damage your target takes (conditional)");
         triggerDesc.put("MANUAL","Manual trigger");
         triggerDesc.put("MESSAGE","Chat message filter");
         triggerDesc.put("NPC_DESPAWN","NPC despawn – filter via list (id or name)");
@@ -474,11 +476,9 @@ public class KPWebhookPresetDialog extends JDialog
                 li("${WORLD}","World number")+
                 li("${STAT}/${CURRENT_STAT}","Real / boosted skill level")+
                 li("${message}/${messageTypeId}","Chat message & type id")+
-                // Removed generic ${HITSPLAT} token per request
-                li("${HITSPLAT_SELF}","Damage amount if hitsplat was on you (blank otherwise)")+ // updated token meaning
-                li("${HITSPLAT_TARGET}","Damage amount if hitsplat was on your current target (blank otherwise)")+ // new token
-                li("IMG id","Positive = item id, negative = sprite id (IMG_* commands)")+
+                li("IMG id","Positive = item id, negative = sprite id (IMG_* commands)")+ // fixed syntax
                 li("Skill tokens","Real & CURRENT_ for: "+skillTokens)+
+                li("HITSPLAT_SELF / HITSPLAT_TARGET","Latest matching hitsplat number (blank if none)")+ // added explicit hitsplat tokens
                 "</ul><div class='dim'>Varianter: ${NAME}, $NAME, {{NAME}}, legacy $SKILL.</div>"+
                 "<h2>Persistens <=0</h2><ul>"+
                 li("HIGHLIGHT_*","Upsert per rule (persistent if duration <=0)")+
@@ -591,10 +591,16 @@ public class KPWebhookPresetDialog extends JDialog
         } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.GRAPHIC_TARGET && r.getGraphicConfig()!=null) {
             graphicIdField.setText(String.valueOf(r.getGraphicConfig().getGraphicId()));
         }
-        if ((r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_SELF || r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_TARGET) && r.getHitsplatConfig()!=null) { // renamed
+        if ((r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_SELF || r.getTriggerType()== KPWebhookPreset.TriggerType.HITSPLAT_TARGET)) { // renamed
             KPWebhookPreset.HitsplatConfig hc = r.getHitsplatConfig();
-            String dir = "Above";
-            if (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS || hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL) dir="Below";
+            if (hc == null) {
+                hc = KPWebhookPreset.HitsplatConfig.builder()
+                        .mode(KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL)
+                        .value(1)
+                        .build();
+                r.setHitsplatConfig(hc);
+            }
+            String dir = (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS || hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL)? "Below":"Above";
             hitsplatModeBox.setSelectedItem(dir);
             if (hc.getValue()!=null) hitsplatValueSpinner.setValue(hc.getValue());
         }
@@ -1412,8 +1418,12 @@ public class KPWebhookPresetDialog extends JDialog
     {
         CardLayout cl = (CardLayout) (triggerCards.getLayout());
         String sel = (String) triggerTypeBox.getSelectedItem();
-        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) || KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) || KPWebhookPreset.TriggerType.TICK.name().equals(sel)
-                || KPWebhookPreset.TriggerType.TARGET.name().equals(sel))
+        if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) ||
+                KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) ||
+                KPWebhookPreset.TriggerType.TICK.name().equals(sel) ||
+                KPWebhookPreset.TriggerType.TARGET.name().equals(sel) ||
+                KPWebhookPreset.TriggerType.ANIMATION_ANY.name().equals(sel) ||
+                KPWebhookPreset.TriggerType.GRAPHIC_ANY.name().equals(sel))
         {
             cl.show(triggerCards, "NONE");
         }
@@ -1427,7 +1437,11 @@ public class KPWebhookPresetDialog extends JDialog
         }
         else
         {
-            cl.show(triggerCards, sel);
+            String cardKey = sel;
+            if (KPWebhookPreset.TriggerType.ANIMATION_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.ANIMATION_TARGET.name();
+            else if (KPWebhookPreset.TriggerType.GRAPHIC_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name();
+            else if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
+            cl.show(triggerCards, cardKey);
         }
         if (triggerDetailsPanel != null && !triggerDetailsPanel.isVisible())
             triggerDetailsPanel.setVisible(true);

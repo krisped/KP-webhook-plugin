@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, GRAPHIC_SELF, GRAPHIC_TARGET, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
         tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat"}
 )
 public class KPWebhookPlugin extends Plugin
@@ -96,6 +96,7 @@ public class KPWebhookPlugin extends Plugin
     private int lastTargetAnimationId = -1; // last animation id for current target
     private int lastTargetGraphicId = -1; // new: last graphic id for current target
     private int lastLocalGraphicId = -1; // new: last local player graphic id
+    private int lastLocalAnimationId = -1; // new: track local animation
     private static final int TARGET_RETENTION_TICKS = 50; // ~30s retention (50 * 0.6s)
     // === End target tracking state ===
 
@@ -245,8 +246,24 @@ public class KPWebhookPlugin extends Plugin
     public void onGameTick(GameTick tick)
     {
         gameTickCounter++;
-        // Update target first so downstream triggers can use updated token
         updateAndProcessTarget();
+        // Self animation change detection
+        try {
+            Player local = client.getLocalPlayer();
+            if (local != null) {
+                int anim = local.getAnimation();
+                if (anim != lastLocalAnimationId) {
+                    lastLocalAnimationId = anim;
+                    if (debugWindow != null && debugWindow.isVisible()) {
+                        try { debugWindow.logAnimationActor("ANIMATION_SELF", local, anim); debugWindow.logAnimationActor("ANIMATION_ANY", local, anim); } catch (Exception ignored) {}
+                    }
+                    fireSelfAnimationTriggers(anim);
+                    // ANY handled in AnimationChanged event now
+                }
+            } else {
+                lastLocalAnimationId = -1;
+            }
+        } catch (Exception ignored) {}
         // Self graphic change detection
         try {
             Player local = client.getLocalPlayer();
@@ -254,7 +271,11 @@ public class KPWebhookPlugin extends Plugin
                 int g = local.getGraphic();
                 if (g != lastLocalGraphicId) {
                     lastLocalGraphicId = g;
+                    if (debugWindow != null && debugWindow.isVisible()) {
+                        try { debugWindow.logGraphicActor("GRAPHIC_SELF", local, g); debugWindow.logGraphicActor("GRAPHIC_ANY", local, g); } catch (Exception ignored) {}
+                    }
                     fireSelfGraphicTriggers(g);
+                    // ANY handled in GraphicChanged event now
                 }
             } else {
                 lastLocalGraphicId = -1;
@@ -439,100 +460,53 @@ public class KPWebhookPlugin extends Plugin
                 int anim = currentTarget.getAnimation();
                 if (anim != lastTargetAnimationId) {
                     lastTargetAnimationId = anim;
+                    if (debugWindow != null && debugWindow.isVisible()) {
+                        try { debugWindow.logAnimationActor("ANIMATION_TARGET", currentTarget, anim); debugWindow.logAnimationActor("ANIMATION_ANY", currentTarget, anim); } catch (Exception ignored) {}
+                    }
                     fireTargetAnimationTriggers(anim);
+                    // ANY handled globally
                 }
                 try {
                     int g = currentTarget.getGraphic();
                     if (g != lastTargetGraphicId) {
                         lastTargetGraphicId = g;
+                        if (debugWindow != null && debugWindow.isVisible()) {
+                            try { debugWindow.logGraphicActor("GRAPHIC_TARGET", currentTarget, g); debugWindow.logGraphicActor("GRAPHIC_ANY", currentTarget, g); } catch (Exception ignored) {}
+                        }
                         fireTargetGraphicTriggers(g);
+                        // ANY handled globally
                     }
                 } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
     }
 
-    // Determine if an Actor is attackable given current world/PvP context
-    private boolean isAttackable(Actor a) {
-        if (a == null) return false;
-        if (a instanceof NPC) {
-            try {
-                NPC npc = (NPC)a;
-                NPCComposition comp = npc.getComposition();
-                if (comp != null) {
-                    String[] acts = comp.getActions();
-                    if (acts != null) {
-                        for (String act : acts) if (act != null && act.equalsIgnoreCase("Attack")) return true;
-                    }
-                }
-            } catch (Exception ignored) {}
-            return false;
-        }
-        if (a instanceof Player) {
-            Player p = (Player)a;
-            Player local = client.getLocalPlayer();
-            if (local != null && p == local) return false; // never target self
-            // Wilderness varbit (RuneLite Varbits.IN_WILDERNESS == 5963) or PvP world types
-            boolean inWild = false;
-            try { inWild = client.getVarbitValue(net.runelite.api.Varbits.IN_WILDERNESS) == 1; } catch (Exception ignored) {}
-            boolean pvpWorld = false;
-            try {
-                EnumSet<WorldType> types = client.getWorldType();
-                if (types != null) {
-                    if (types.contains(WorldType.PVP) || types.contains(WorldType.HIGH_RISK) || types.contains(WorldType.DEADMAN)) {
-                        pvpWorld = true;
-                    }
-                }
-            } catch (Exception ignored) {}
-            return inWild || pvpWorld; // only target players when PvP possible
-        }
-        return false;
-    }
-
-    private void stopAllTargetPresets() {
+    private void fireSelfAnimationTriggers(int newAnim) {
         for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive()) continue;
-            if (r.getTriggerType() == KPWebhookPreset.TriggerType.TARGET) {
-                stopRule(r.getId());
-            }
-        }
-    }
-
-    private void fireTargetChangeTriggers(Actor oldTarget, Actor newTarget) {
-        for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.TARGET) continue;
-            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(),
-                    (newTarget instanceof Player)? (Player)newTarget : null,
-                    (newTarget instanceof NPC)? (NPC)newTarget : null);
-        }
-    }
-
-    private void fireTargetAnimationTriggers(int newAnim) {
-        for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_TARGET) continue;
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_SELF) continue;
             KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
             if (cfg == null || cfg.getAnimationId() == null) continue;
             if (cfg.getAnimationId() == newAnim) {
-                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(),
-                        (currentTarget instanceof Player)? (Player)currentTarget : null,
-                        (currentTarget instanceof NPC)? (NPC)currentTarget : null);
+                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
             }
         }
     }
-
-    private void fireTargetGraphicTriggers(int newGraphic) {
+    private void fireAnyAnimationTriggers(int newAnim, boolean self, boolean target) {
+        if (!self && !target) return;
         for (KPWebhookPreset r : getRules()) {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.GRAPHIC_TARGET) continue;
-            KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig();
-            if (cfg == null || cfg.getGraphicId() == null) continue;
-            if (cfg.getGraphicId() == newGraphic) {
-                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(),
-                        (currentTarget instanceof Player)? (Player)currentTarget : null,
-                        (currentTarget instanceof NPC)? (NPC)currentTarget : null);
-            }
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_ANY) continue;
+            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (target && currentTarget instanceof Player)?(Player)currentTarget:null, (target && currentTarget instanceof NPC)?(NPC)currentTarget:null);
+        }
+    }
+    private void fireAnyGraphicTriggers(int newGraphic, boolean self, boolean target) {
+        if (!self && !target) return;
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.GRAPHIC_ANY) continue;
+            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (target && currentTarget instanceof Player)?(Player)currentTarget:null, (target && currentTarget instanceof NPC)?(NPC)currentTarget:null);
         }
     }
 
+    // === Added missing helper methods for graphics / target handling ===
     private void fireSelfGraphicTriggers(int newGraphic) {
         for (KPWebhookPreset r : getRules()) {
             if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.GRAPHIC_SELF) continue;
@@ -543,17 +517,150 @@ public class KPWebhookPlugin extends Plugin
             }
         }
     }
-
+    private void fireTargetAnimationTriggers(int newAnim) {
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.ANIMATION_TARGET) continue;
+            KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
+            if (cfg == null || cfg.getAnimationId() == null) continue;
+            if (cfg.getAnimationId() == newAnim) {
+                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (currentTarget instanceof Player)?(Player)currentTarget:null, (currentTarget instanceof NPC)?(NPC)currentTarget:null);
+            }
+        }
+    }
+    private void fireTargetGraphicTriggers(int newGraphic) {
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.GRAPHIC_TARGET) continue;
+            KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig();
+            if (cfg == null || cfg.getGraphicId() == null) continue;
+            if (cfg.getGraphicId() == newGraphic) {
+                executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (currentTarget instanceof Player)?(Player)currentTarget:null, (currentTarget instanceof NPC)?(NPC)currentTarget:null);
+            }
+        }
+    }
+    private void fireTargetChangeTriggers(Actor oldTarget, Actor newTarget) {
+        if (oldTarget == newTarget) return; // no change
+        for (KPWebhookPreset r : getRules()) {
+            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.TARGET) continue;
+            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (newTarget instanceof Player)?(Player)newTarget:null, (newTarget instanceof NPC)?(NPC)newTarget:null);
+        }
+    }
+    private boolean isAttackable(Actor a) {
+        if (a == null) return false;
+        if (a instanceof NPC) return true; // treat all NPCs as attackable for simplicity
+        if (a instanceof Player) return a != client.getLocalPlayer();
+        return false;
+    }
+    private void stopAllTargetPresets() {
+        for (KPWebhookPreset r : getRules()) {
+            if (r.getTriggerType() == KPWebhookPreset.TriggerType.TARGET) {
+                try { stopRule(r.getId()); } catch (Exception ignored) {}
+            }
+        }
+    }
     private String getCurrentTargetName() {
-        try {
-            if (currentTarget == null) return "";
-            if (currentTarget instanceof Player) return sanitizePlayerName(((Player)currentTarget).getName());
-            if (currentTarget instanceof NPC) return sanitizeNpcName(((NPC)currentTarget).getName());
-        } catch (Exception ignored) {}
+        if (currentTarget == null) return "";
+        if (currentTarget instanceof Player) return sanitizePlayerName(((Player)currentTarget).getName());
+        if (currentTarget instanceof NPC) return sanitizeNpcName(((NPC)currentTarget).getName());
         return "";
     }
+    // === End added helpers ===
 
-    /* ================= Events ================= */
+    // === New global animation/graphic event subscribers ===
+    @Subscribe
+    public void onAnimationChanged(AnimationChanged ev) {
+        try {
+            Actor a = ev.getActor(); if (a == null) return;
+            int anim = a.getAnimation();
+            // Skip if self/target already processed in tick? still log for completeness
+            if (debugWindow != null && debugWindow.isVisible()) {
+                debugWindow.logAnimationActor("ANIMATION_ANY", a, anim);
+                if (a == client.getLocalPlayer()) debugWindow.logAnimationActor("ANIMATION_SELF", a, anim);
+                else if (a == currentTarget) debugWindow.logAnimationActor("ANIMATION_TARGET", a, anim);
+            }
+            // Fire ANY presets
+            for (KPWebhookPreset r : getRules()) {
+                if (!r.isActive()) continue;
+                if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_ANY) {
+                    if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null);
+                    else if (a instanceof NPC) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), null, (NPC)a);
+                    else executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_SELF && a == client.getLocalPlayer()) {
+                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig(); if (cfg!=null && cfg.getAnimationId()!=null && cfg.getAnimationId()==anim) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_TARGET && a == currentTarget) {
+                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig(); if (cfg!=null && cfg.getAnimationId()!=null && cfg.getAnimationId()==anim) {
+                        if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null); else if (a instanceof NPC) executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig(),null,(NPC)a); else executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig());
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Subscribe
+    public void onGraphicChanged(GraphicChanged ev) {
+        try {
+            Actor a = ev.getActor(); if (a == null) return;
+            int g = a.getGraphic();
+            if (debugWindow != null && debugWindow.isVisible()) {
+                debugWindow.logGraphicActor("GRAPHIC_ANY", a, g);
+                if (a == client.getLocalPlayer()) debugWindow.logGraphicActor("GRAPHIC_SELF", a, g);
+                else if (a == currentTarget) debugWindow.logGraphicActor("GRAPHIC_TARGET", a, g);
+            }
+            for (KPWebhookPreset r : getRules()) {
+                if (!r.isActive()) continue;
+                if (r.getTriggerType() == KPWebhookPreset.TriggerType.GRAPHIC_ANY) {
+                    if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null);
+                    else if (a instanceof NPC) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), null, (NPC)a);
+                    else executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.GRAPHIC_SELF && a == client.getLocalPlayer()) {
+                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && cfg.getGraphicId()!=null && cfg.getGraphicId()==g) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.GRAPHIC_TARGET && a == currentTarget) {
+                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && cfg.getGraphicId()!=null && cfg.getGraphicId()==g) {
+                        if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null); else if (a instanceof NPC) executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig(),null,(NPC)a); else executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig());
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+    // === End global subscribers ===
+
+
+    @Subscribe
+    public void onVarbitChanged(VarbitChanged ev)
+    {
+        int varbitId = ev.getVarbitId();
+        int newValue = ev.getValue();
+        if (debugWindow != null && debugWindow.isVisible()) {
+            try { debugWindow.logVarbit(varbitId, newValue); } catch (Exception ignored) {}
+            try {
+                int varpId = ev.getVarpId();
+                if (varpId >= 0) { debugWindow.logVarplayer(varpId, client.getVarpValue(varpId)); }
+            } catch (Exception ignored) {}
+        }
+        for (KPWebhookPreset r : getRules())
+        {
+            if (!r.isActive()) continue;
+            if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARBIT) {
+                KPWebhookPreset.VarbitConfig cfg = r.getVarbitConfig();
+                if (cfg == null || cfg.getVarbitId() == null || cfg.getValue() == null) continue;
+                if (cfg.getVarbitId() == varbitId && cfg.getValue() == newValue) {
+                    executeRule(r, null, -1, null, null, null);
+                }
+            } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARPLAYER) {
+                try {
+                    int varpId = ev.getVarpId();
+                    KPWebhookPreset.VarplayerConfig cfg = r.getVarplayerConfig();
+                    if (cfg == null || cfg.getVarplayerId() == null || cfg.getValue() == null) continue;
+                    if (varpId == cfg.getVarplayerId()) {
+                        int val = client.getVarpValue(varpId);
+                        if (val == cfg.getValue()) {
+                            executeRule(r, null, -1, null, null, null);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
     @Subscribe
     public void onStatChanged(StatChanged ev)
     {
@@ -655,54 +762,6 @@ public class KPWebhookPlugin extends Plugin
         }
     }
 
-    @Subscribe
-    public void onVarbitChanged(VarbitChanged ev)
-    {
-        int varbitId = ev.getVarbitId();
-        int newValue = ev.getValue();
-        if (debugWindow != null && debugWindow.isVisible()) {
-            try { debugWindow.logVarbit(varbitId, newValue); } catch (Exception ignored) {}
-        }
-        for (KPWebhookPreset r : getRules())
-        {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.VARBIT) continue;
-            KPWebhookPreset.VarbitConfig cfg = r.getVarbitConfig();
-            if (cfg == null || cfg.getVarbitId() == null || cfg.getValue() == null) continue;
-            if (cfg.getVarbitId() == varbitId && cfg.getValue() == newValue)
-            {
-                executeRule(r, null, -1, null, null, null);
-            }
-        }
-    }
-
-    @Subscribe
-    public void onChatMessage(ChatMessage ev)
-    {
-        ChatMessageType type = ev.getType();
-        String raw = ev.getMessage();
-        String plain = raw;
-        try { plain = Text.removeTags(raw); } catch (Exception ignored) {}
-        if (plain == null) plain = "";
-        int typeId = type.ordinal();
-        String plainNormalized = plain.replace('\u00A0',' ').trim();
-        String sender = sanitizePlayerName(ev.getName());
-        if (debugWindow != null && debugWindow.isVisible()) {
-            debugWindow.addMessage(type, typeId, sender, plainNormalized, raw);
-        }
-        for (KPWebhookPreset r : getRules())
-        {
-            if (!r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.MESSAGE) continue;
-            KPWebhookPreset.MessageConfig cfg = r.getMessageConfig();
-            if (cfg == null || cfg.getMessageId() == null) continue;
-            int wantedId = cfg.getMessageId();
-            if (wantedId != -1 && wantedId != typeId) continue; // -1 = ANY type
-            if (cfg.getMessageText() != null && !cfg.getMessageText().isBlank())
-            {
-                if (!wildcardMatch(plainNormalized, cfg.getMessageText())) continue;
-            }
-            executeMessageRule(r, plainNormalized, typeId);
-        }
-    }
 
     // ===== Restored helper methods for STAT / PLAYER triggers and execution =====
     private boolean matchesPlayer(KPWebhookPreset.PlayerConfig cfg, Player p)
@@ -813,6 +872,7 @@ public class KPWebhookPlugin extends Plugin
     private void executeRule(KPWebhookPreset rule, Skill stat, int current, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg, Player otherPlayer, NPC otherNpc)
     {
         if (rule == null) return;
+        stopRule(rule.getId());
         if (rule.getTriggerType()== KPWebhookPreset.TriggerType.STAT) {
             removeOverheadsForRule(rule.getId(), false);
         }
@@ -830,14 +890,10 @@ public class KPWebhookPlugin extends Plugin
         ctx.put("time", Instant.now().toString());
         ctx.put("otherPlayer", otherPlayer!=null? sanitizePlayerName(otherPlayer.getName()):"");
         ctx.put("otherCombat", otherPlayer!=null? String.valueOf(otherPlayer.getCombatLevel()):"");
-        if (otherNpc != null) {
-            String npcName = sanitizeNpcName(otherNpc.getName());
-            ctx.put("npcName", npcName);
-            ctx.put("npcId", String.valueOf(otherNpc.getId()));
-        } else {
-            ctx.put("npcName", "");
-            ctx.put("npcId", "");
-        }
+        if (otherNpc != null) { ctx.put("npcName", sanitizeNpcName(otherNpc.getName())); ctx.put("npcId", String.valueOf(otherNpc.getId())); } else { ctx.put("npcName", ""); ctx.put("npcId", ""); }
+        ctx.put("HITSPLAT_SELF", "");
+        ctx.put("HITSPLAT_TARGET", "");
+        ctx.put("HITSPLAT", "");
         try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
         Skill skillCtx = stat!=null? stat : (statCfg!=null? statCfg.getSkill(): null);
         if (skillCtx != null) {
@@ -845,16 +901,12 @@ public class KPWebhookPlugin extends Plugin
             try { ctx.put("CURRENT_STAT", String.valueOf(client.getBoostedSkillLevel(skillCtx))); } catch (Exception ignored) { ctx.put("CURRENT_STAT"," "); }
         } else { ctx.put("STAT", ""); ctx.put("CURRENT_STAT", ""); }
         for (Skill s : Skill.values()) {
-            try {
-                int real = client.getRealSkillLevel(s);
-                int boosted = client.getBoostedSkillLevel(s);
+            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
                 ctx.put("$"+s.name(), String.valueOf(real));
                 ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
                 ctx.put(s.name(), String.valueOf(real));
-                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted));
-            } catch (Exception ignored) {}
+                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
         }
-        // sequence preparation identical
         List<PendingCommand> list = new ArrayList<>();
         for (String rawLine : cmds.split("\r?\n")) {
             String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
@@ -918,6 +970,7 @@ public class KPWebhookPlugin extends Plugin
 
     private void executeMessageRule(KPWebhookPreset rule, String messageText, int messageTypeId)
     {
+        stopRule(rule.getId());
         String cmds = rule.getCommands(); if (cmds==null || cmds.isEmpty()) return;
         Map<String,String> ctx = new HashMap<>();
         ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
@@ -929,38 +982,35 @@ public class KPWebhookPlugin extends Plugin
         ctx.put("time", Instant.now().toString());
         ctx.put("otherPlayer", "");
         ctx.put("otherCombat", "");
-        ctx.put("message", messageText); // new token
+        ctx.put("message", messageText);
         ctx.put("messageTypeId", String.valueOf(messageTypeId));
         ctx.put("TARGET", getCurrentTargetName());
         ctx.put("$TARGET", getCurrentTargetName());
-        // World token also for message-based rules
+        ctx.put("HITSPLAT_SELF", "");
+        ctx.put("HITSPLAT_TARGET", "");
+        ctx.put("HITSPLAT", "");
         try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
-        // No specific stat context here
         ctx.put("STAT", "");
         ctx.put("CURRENT_STAT", "");
-        // Add skill tokens (both legacy and new forms)
-        for (Skill s : Skill.values())
-        {
-            try {
-                int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
-                ctx.put("$" + s.name(), String.valueOf(real));
-                ctx.put("$CURRENT_" + s.name(), String.valueOf(boosted));
+        for (Skill s : Skill.values()) {
+            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
+                ctx.put("$"+s.name(), String.valueOf(real));
+                ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
                 ctx.put(s.name(), String.valueOf(real));
-                ctx.put("CURRENT_" + s.name(), String.valueOf(boosted));
-            } catch (Exception ignored) {}
+                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
         }
         List<PendingCommand> list = new ArrayList<>();
-        for (String rawLine : cmds.split("\r?\n"))
-        {
+        for (String rawLine : cmds.split("\r?\n")) {
             String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
             String upper = line.toUpperCase(Locale.ROOT);
-            if (upper.startsWith("SLEEP ")) { long ms=0; try{ ms=Long.parseLong(line.substring(6).trim()); }catch(Exception ignored){} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) { /* ignore */ }
+            if (upper.startsWith("SLEEP ")) { long ms=0; try{ ms=Long.parseLong(line.substring(6).trim()); }catch(Exception ignored){} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) {}
             else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try{ ticks=Integer.parseInt(parts[1]); }catch(Exception ignored){} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
         if (list.isEmpty()) return;
         CommandSequence seq = new CommandSequence();
         seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0;
         activeSequences.add(seq);
     }
+
 
     private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx)
     {
@@ -1139,19 +1189,20 @@ public class KPWebhookPlugin extends Plugin
     private String expand(String text, Map<String,String> ctx)
     {
         if (text == null || ctx == null) return text;
-        for (Map.Entry<String,String> e : ctx.entrySet())
+        // Replace longer keys first to avoid partial collisions (e.g. HITSPLAT_SELF vs HITSPLAT)
+        java.util.List<String> keys = new java.util.ArrayList<>(ctx.keySet());
+        keys.sort((a,b)->Integer.compare(b.length(), a.length()));
+        for (String key : keys)
         {
-            String key = e.getKey();
-            String value = e.getValue();
-            if (key != null && value != null)
-            {
-                // If legacy key started with $, also attempt direct replacement of key itself
-                if (key.startsWith("$")) {
-                    text = text.replace(key, value);
-                }
-                text = text.replace("${" + key + "}", value);
-                text = text.replace("$" + key, value);
-                text = text.replace("{{" + key + "}}", value); // support double curly tokens
+            String value = ctx.get(key);
+            if (key == null || value == null) continue;
+            // Exact token patterns
+            text = text.replace("${" + key + "}", value);
+            text = text.replace("{{" + key + "}}", value);
+            text = text.replace("$" + key, value);
+            // Legacy keys that themselves start with $
+            if (key.startsWith("$")) {
+                text = text.replace(key, value);
             }
         }
         return text;
@@ -1355,7 +1406,7 @@ public class KPWebhookPlugin extends Plugin
     private void saveAllPresets() { if (storage==null) return; for (KPWebhookPreset p : rules) savePreset(p); }
     public KPWebhookPreset find(int id) { for (KPWebhookPreset r : rules) if (r.getId()==id) return r; return null; }
 
-    // === Added CRUD helpers used by panel ===
+   // === Added CRUD helpers used by panel ===
     public synchronized void addOrUpdate(KPWebhookPreset preset) {
         if (preset == null) return;
         if (preset.getId() < 0) { // new preset
@@ -1480,6 +1531,7 @@ public class KPWebhookPlugin extends Plugin
 
     private void executeHitsplatRule(KPWebhookPreset rule, int amount, boolean self) {
         if (rule == null) return;
+        stopRule(rule.getId());
         String cmds = rule.getCommands();
         if (cmds == null || cmds.isBlank()) return;
         Map<String,String> ctx = new HashMap<>();
@@ -1489,26 +1541,17 @@ public class KPWebhookPlugin extends Plugin
         ctx.put("time", Instant.now().toString());
         ctx.put("otherPlayer","" ); ctx.put("otherCombat","" );
         ctx.put("TARGET", getCurrentTargetName()); ctx.put("$TARGET", getCurrentTargetName());
+        if (self) { ctx.put("HITSPLAT_SELF", String.valueOf(amount)); ctx.put("HITSPLAT_TARGET", ""); }
+        else { ctx.put("HITSPLAT_SELF", ""); ctx.put("HITSPLAT_TARGET", String.valueOf(amount)); }
         ctx.put("HITSPLAT", String.valueOf(amount));
-        // Fill conditional tokens with damage amount only when relevant
-        if (self) {
-            ctx.put("HITSPLAT_SELF", String.valueOf(amount));
-            ctx.put("HITSPLAT_TARGET", "");
-        } else {
-            ctx.put("HITSPLAT_SELF", "");
-            ctx.put("HITSPLAT_TARGET", String.valueOf(amount));
-        }
         try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
         ctx.put("STAT", ""); ctx.put("CURRENT_STAT", "");
         for (Skill s : Skill.values()) {
-            try {
-                int real = client.getRealSkillLevel(s);
-                int boosted = client.getBoostedSkillLevel(s);
+            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
                 ctx.put("$"+s.name(), String.valueOf(real));
                 ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
                 ctx.put(s.name(), String.valueOf(real));
-                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted));
-            } catch (Exception ignored) {}
+                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
         }
         List<PendingCommand> list = new ArrayList<>();
         for (String rawLine : cmds.split("\r?\n")) {
@@ -1518,7 +1561,7 @@ public class KPWebhookPlugin extends Plugin
             else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try { ticks=Integer.parseInt(parts[1]); } catch (Exception ignored) {} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
         if (list.isEmpty()) return;
         CommandSequence seq = new CommandSequence();
-        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0L;
+        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0;
         activeSequences.add(seq);
     }
 }

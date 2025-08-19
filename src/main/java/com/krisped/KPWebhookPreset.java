@@ -17,19 +17,21 @@ public class KPWebhookPreset
         WIDGET,
         PLAYER_SPAWN,
         PLAYER_DESPAWN,
-        NPC_SPAWN, // new
-        NPC_DESPAWN, // new
+        NPC_SPAWN,
+        NPC_DESPAWN,
         ANIMATION_SELF,
-        ANIMATION_TARGET, // new target animation trigger
-        GRAPHIC_SELF, // new: local spot/graphic id trigger
-        GRAPHIC_TARGET, // new: target spot/graphic id trigger
-        HITSPLAT_SELF, // renamed from HIT_SPLAT_SELF
-        HITSPLAT_TARGET, // renamed from HIT_SPLAT_TARGET
+        ANIMATION_TARGET,
+        ANIMATION_ANY,
+        GRAPHIC_SELF,
+        GRAPHIC_TARGET,
+        GRAPHIC_ANY,
+        HITSPLAT_SELF,
+        HITSPLAT_TARGET,
         MESSAGE,
         VARBIT,
         VARPLAYER,
-        TICK, // new continuous trigger
-        TARGET // current combat target changed / expired
+        TICK,
+        TARGET
     }
 
     public enum StatMode
@@ -323,166 +325,73 @@ public class KPWebhookPreset
 
     public String prettyTrigger()
     {
-        if (triggerType == null)
-        {
-            return "?";
-        }
-        switch (triggerType)
-        {
-            case NPC_SPAWN:
-            case NPC_DESPAWN:
-                if (npcConfig == null || ((npcConfig.getNpcIds()==null || npcConfig.getNpcIds().isEmpty()) && (npcConfig.getNpcNames()==null || npcConfig.getNpcNames().isEmpty()))) {
-                    return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN":"NPC_DESPAWN") + " ?";
-                }
-                String src = npcConfig.getRawList()!=null? npcConfig.getRawList():"";
-                return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN ":"NPC_DESPAWN ") + (src.length()>30? src.substring(0,27)+"...":src);
-            case TARGET:
-                return "TARGET (current)";
-            case ANIMATION_TARGET:
-                if (animationConfig == null || animationConfig.getAnimationId() == null) {
-                    return "ANIMATION_TARGET ?";
-                }
-                return "ANIMATION_TARGET " + animationConfig.getAnimationId();
-            case GRAPHIC_SELF:
-                if (graphicConfig == null || graphicConfig.getGraphicId() == null) {
-                    return "GRAPHIC_SELF ?";
-                }
-                return "GRAPHIC_SELF " + graphicConfig.getGraphicId();
-            case GRAPHIC_TARGET:
-                if (graphicConfig == null || graphicConfig.getGraphicId() == null) {
-                    return "GRAPHIC_TARGET ?";
-                }
-                return "GRAPHIC_TARGET " + graphicConfig.getGraphicId();
-            case HITSPLAT_SELF:
-                if (hitsplatConfig == null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
-                return "HITSPLAT_SELF " + humanHitsplatMode(hitsplatConfig.getMode()) + hitsplatConfig.getValue();
-            case HITSPLAT_TARGET:
-                if (hitsplatConfig == null || hitsplatConfig.getValue()==null) return "HITSPLAT_TARGET ?";
-                return "HITSPLAT_TARGET " + humanHitsplatMode(hitsplatConfig.getMode()) + hitsplatConfig.getValue();
-            default:
-                // fall back to existing switch below
-                break;
-        }
-        // original switch content kept
-        switch (triggerType)
-        {
-            case MANUAL:
-                return "Manual";
+        if (triggerType == null) return "?";
+        switch (triggerType) {
+            case MANUAL: return "Manual";
+            case TARGET: return "TARGET (current)";
+            case TICK: return "TICK (continuous)";
             case STAT:
-                if (statConfig == null || statConfig.getSkill() == null)
-                {
-                    return "STAT ?";
-                }
-                switch (statConfig.getMode())
-                {
-                    case LEVEL_UP:
-                        return statConfig.getSkill().name() + " LEVEL_UP";
-                    case ABOVE:
-                        return statConfig.getSkill().name() + " > " + statConfig.getThreshold();
-                    case BELOW:
-                        return statConfig.getSkill().name() + " < " + statConfig.getThreshold();
+                if (statConfig == null || statConfig.getSkill()==null) return "STAT ?";
+                switch (statConfig.getMode()) {
+                    case LEVEL_UP: return statConfig.getSkill().name()+" LEVEL_UP";
+                    case ABOVE: return statConfig.getSkill().name()+" > "+statConfig.getThreshold();
+                    case BELOW: return statConfig.getSkill().name()+" < "+statConfig.getThreshold();
                 }
                 return "STAT ?";
             case WIDGET:
-                if (widgetConfig == null)
-                {
-                    return "WIDGET ?";
-                }
-                if (widgetConfig.getChildId() != null)
-                {
-                    return "WIDGET " + widgetConfig.getGroupId() + ":" + widgetConfig.getChildId();
-                }
-                return "WIDGET " + widgetConfig.getGroupId();
+                if (widgetConfig==null) return "WIDGET ?";
+                return widgetConfig.getChildId()!=null? "WIDGET "+widgetConfig.getGroupId()+":"+widgetConfig.getChildId() : "WIDGET "+widgetConfig.getGroupId();
             case PLAYER_SPAWN:
             case PLAYER_DESPAWN:
-                if (playerConfig == null)
-                {
-                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ?";
-                }
-                if (playerConfig.isAll())
-                {
-                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ALL";
-                }
-                if (playerConfig.getName()!=null && !playerConfig.getName().isBlank())
-                {
-                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN ":"PLAYER_DESPAWN ") + playerConfig.getName();
-                }
-                if (playerConfig.getCombatRange()!=null)
-                {
-                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN +/-":"PLAYER_DESPAWN +/-") + playerConfig.getCombatRange();
-                }
-                return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN") + " ?";
-            case ANIMATION_SELF:
-                if (animationConfig == null || animationConfig.getAnimationId() == null)
-                {
-                    return "ANIMATION_SELF ?";
-                }
-                return "ANIMATION_SELF " + animationConfig.getAnimationId();
-            case MESSAGE:
-                if (messageConfig == null)
-                {
-                    return "MESSAGE ?";
-                }
-                String result = "MESSAGE";
-                if (messageConfig.getMessageId() != null)
-                {
-                    result += " " + messageConfig.getMessageId();
-                }
-                if (messageConfig.getMessageText() != null && !messageConfig.getMessageText().isBlank())
-                {
-                    result += " " + messageConfig.getMessageText();
-                }
-                return result;
-            case VARBIT:
-                if (varbitConfig == null)
-                {
-                    return "VARBIT ?";
-                }
-                String varbitResult = "VARBIT";
-                if (varbitConfig.getVarbitId() != null)
-                {
-                    varbitResult += " " + varbitConfig.getVarbitId();
-                }
-                if (varbitConfig.getValue() != null)
-                {
-                    varbitResult += " = " + varbitConfig.getValue();
-                }
-                return varbitResult;
-            case VARPLAYER:
-                if (varplayerConfig == null)
-                {
-                    return "VARPLAYER ?";
-                }
-                String varplayerResult = "VARPLAYER";
-                if (varplayerConfig.getVarplayerId() != null)
-                {
-                    varplayerResult += " " + varplayerConfig.getVarplayerId();
-                }
-                if (varplayerConfig.getValue() != null)
-                {
-                    varplayerResult += " = " + varplayerConfig.getValue();
-                }
-                return varplayerResult;
-            case TICK:
-                return "TICK (continuous)";
+                if (playerConfig==null) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ?";
+                if (playerConfig.isAll()) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ALL";
+                if (playerConfig.getName()!=null && !playerConfig.getName().isBlank()) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN ":"PLAYER_DESPAWN ")+playerConfig.getName();
+                if (playerConfig.getCombatRange()!=null) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN +/-":"PLAYER_DESPAWN +/-")+playerConfig.getCombatRange();
+                return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ?";
             case NPC_SPAWN:
             case NPC_DESPAWN:
-                // already handled above, keep default fallback
-                return "NPC";
-            case TARGET:
-                return "TARGET (current)";
+                if (npcConfig==null || ((npcConfig.getNpcIds()==null || npcConfig.getNpcIds().isEmpty()) && (npcConfig.getNpcNames()==null || npcConfig.getNpcNames().isEmpty())))
+                    return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN":"NPC_DESPAWN")+" ?";
+                String raw = npcConfig.getRawList()!=null? npcConfig.getRawList():"";
+                if (raw.length()>30) raw = raw.substring(0,27)+"...";
+                return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN ":"NPC_DESPAWN ")+raw;
+            case ANIMATION_SELF:
+                if (animationConfig==null || animationConfig.getAnimationId()==null) return "ANIMATION_SELF ?";
+                return "ANIMATION_SELF "+animationConfig.getAnimationId();
             case ANIMATION_TARGET:
-                return "ANIMATION_TARGET";
+                if (animationConfig==null || animationConfig.getAnimationId()==null) return "ANIMATION_TARGET ?";
+                return "ANIMATION_TARGET "+animationConfig.getAnimationId();
+            case ANIMATION_ANY: return "ANIMATION_ANY";
             case GRAPHIC_SELF:
-                return "GRAPHIC_SELF";
+                if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_SELF ?"; return "GRAPHIC_SELF "+graphicConfig.getGraphicId();
             case GRAPHIC_TARGET:
-                return "GRAPHIC_TARGET";
+                if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_TARGET ?"; return "GRAPHIC_TARGET "+graphicConfig.getGraphicId();
+            case GRAPHIC_ANY: return "GRAPHIC_ANY";
             case HITSPLAT_SELF:
-                return "HITSPLAT_SELF";
+                if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
+                return "HITSPLAT_SELF "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
             case HITSPLAT_TARGET:
-                return "HITSPLAT_TARGET";
-            default:
-                return "?";
+                if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_TARGET ?";
+                return "HITSPLAT_TARGET "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
+            case MESSAGE:
+                if (messageConfig==null) return "MESSAGE ?";
+                String res = "MESSAGE";
+                if (messageConfig.getMessageId()!=null) res += " "+messageConfig.getMessageId();
+                if (messageConfig.getMessageText()!=null && !messageConfig.getMessageText().isBlank()) res += " "+messageConfig.getMessageText();
+                return res;
+            case VARBIT:
+                if (varbitConfig==null) return "VARBIT ?";
+                String vb = "VARBIT";
+                if (varbitConfig.getVarbitId()!=null) vb += " "+varbitConfig.getVarbitId();
+                if (varbitConfig.getValue()!=null) vb += " = "+varbitConfig.getValue();
+                return vb;
+            case VARPLAYER:
+                if (varplayerConfig==null) return "VARPLAYER ?";
+                String vp = "VARPLAYER";
+                if (varplayerConfig.getVarplayerId()!=null) vp += " "+varplayerConfig.getVarplayerId();
+                if (varplayerConfig.getValue()!=null) vp += " = "+varplayerConfig.getValue();
+                return vp;
+            default: return "?";
         }
     }
 
@@ -502,13 +411,14 @@ public class KPWebhookPreset
         switch (m) {
             case LESS:
             case LESS_EQUAL:
-                return "Below ";
+                return "BELOW ";
             case EQUAL:
-                return "="; // rarely used / legacy
+                return "= "; // legacy / rarely used
             case GREATER:
             case GREATER_EQUAL:
             default:
-                return "Above ";
+                return "ABOVE ";
         }
     }
 }
+
