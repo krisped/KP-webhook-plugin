@@ -76,7 +76,8 @@ public class KPWebhookPreset
     {
         @Builder.Default
         private boolean all = true;
-        private String name; // case-insensitive match if not null/blank
+        private String name; // case-insensitive match if not null/blank (legacy single)
+        private java.util.List<String> names; // new multi-name support (lowercase sanitized)
         private Integer combatRange; // +/- combat levels from local player if not null
     }
 
@@ -87,7 +88,8 @@ public class KPWebhookPreset
     @Builder
     public static class AnimationConfig
     {
-        private Integer animationId;
+        private Integer animationId; // legacy single id
+        private java.util.List<Integer> animationIds; // new multi-id support
     }
 
     @Getter
@@ -97,7 +99,8 @@ public class KPWebhookPreset
     @Builder
     public static class GraphicConfig
     {
-        private Integer graphicId;
+        private Integer graphicId; // legacy single id
+        private java.util.List<Integer> graphicIds; // new multi-id support
     }
 
     @Getter
@@ -130,7 +133,8 @@ public class KPWebhookPreset
     @Builder
     public static class VarbitConfig
     {
-        private Integer varbitId;
+        private Integer varbitId; // legacy single id
+        private java.util.List<Integer> varbitIds; // new multi-id support
         private Integer value;
     }
 
@@ -141,7 +145,8 @@ public class KPWebhookPreset
     @Builder
     public static class VarplayerConfig
     {
-        private Integer varplayerId;
+        private Integer varplayerId; // legacy single id
+        private java.util.List<Integer> varplayerIds; // new multi-id support
         private Integer value;
     }
 
@@ -162,7 +167,8 @@ public class KPWebhookPreset
     @AllArgsConstructor
     @Builder
     public static class ProjectileConfig {
-        private Integer projectileId; // id to match (required)
+        private Integer projectileId; // legacy single id
+        private java.util.List<Integer> projectileIds; // new multi-id support (null/empty = any for *_ANY)
     }
 
     @Builder.Default
@@ -358,6 +364,11 @@ public class KPWebhookPreset
             case PLAYER_DESPAWN:
                 if (playerConfig==null) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ?";
                 if (playerConfig.isAll()) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ALL";
+                java.util.List<String> pNames = playerConfig.getNames();
+                if (pNames!=null && !pNames.isEmpty()) {
+                    String joined = pNames.size()==1? pNames.get(0): pNames.get(0)+",...";
+                    return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN ":"PLAYER_DESPAWN ")+joined;
+                }
                 if (playerConfig.getName()!=null && !playerConfig.getName().isBlank()) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN ":"PLAYER_DESPAWN ")+playerConfig.getName();
                 if (playerConfig.getCombatRange()!=null) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN +/-":"PLAYER_DESPAWN +/-")+playerConfig.getCombatRange();
                 return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ?";
@@ -369,24 +380,40 @@ public class KPWebhookPreset
                 if (raw.length()>30) raw = raw.substring(0,27)+"...";
                 return (triggerType==TriggerType.NPC_SPAWN?"NPC_SPAWN ":"NPC_DESPAWN ")+raw;
             case ANIMATION_SELF:
-                if (animationConfig==null || animationConfig.getAnimationId()==null) return "ANIMATION_SELF ?";
-                return "ANIMATION_SELF "+animationConfig.getAnimationId();
+                if (animationConfig==null) return "ANIMATION_SELF ?";
+                java.util.List<Integer> animSelf = animationConfig.getAnimationIds()!=null? animationConfig.getAnimationIds(): (animationConfig.getAnimationId()!=null? java.util.List.of(animationConfig.getAnimationId()): java.util.List.of());
+                if (animSelf.isEmpty()) return "ANIMATION_SELF ?"; return "ANIMATION_SELF "+shortJoin(animSelf);
             case ANIMATION_TARGET:
-                if (animationConfig==null || animationConfig.getAnimationId()==null) return "ANIMATION_TARGET ?";
-                return "ANIMATION_TARGET "+animationConfig.getAnimationId();
+                if (animationConfig==null) return "ANIMATION_TARGET ?";
+                java.util.List<Integer> animT = animationConfig.getAnimationIds()!=null? animationConfig.getAnimationIds(): (animationConfig.getAnimationId()!=null? java.util.List.of(animationConfig.getAnimationId()): java.util.List.of());
+                if (animT.isEmpty()) return "ANIMATION_TARGET ?"; return "ANIMATION_TARGET "+shortJoin(animT);
             case ANIMATION_ANY: return "ANIMATION_ANY (alle animasjoner)";
             case GRAPHIC_SELF:
-                if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_SELF ?"; return "GRAPHIC_SELF "+graphicConfig.getGraphicId();
+                if (graphicConfig==null) return "GRAPHIC_SELF ?"; {
+                    java.util.List<Integer> gSelf = graphicConfig.getGraphicIds()!=null? graphicConfig.getGraphicIds(): (graphicConfig.getGraphicId()!=null? java.util.List.of(graphicConfig.getGraphicId()): java.util.List.of());
+                    if (gSelf.isEmpty()) return "GRAPHIC_SELF ?"; return "GRAPHIC_SELF "+shortJoin(gSelf);
+                }
             case GRAPHIC_TARGET:
-                if (graphicConfig==null || graphicConfig.getGraphicId()==null) return "GRAPHIC_TARGET ?"; return "GRAPHIC_TARGET "+graphicConfig.getGraphicId();
+                if (graphicConfig==null) return "GRAPHIC_TARGET ?"; {
+                    java.util.List<Integer> gT = graphicConfig.getGraphicIds()!=null? graphicConfig.getGraphicIds(): (graphicConfig.getGraphicId()!=null? java.util.List.of(graphicConfig.getGraphicId()): java.util.List.of());
+                    if (gT.isEmpty()) return "GRAPHIC_TARGET ?"; return "GRAPHIC_TARGET "+shortJoin(gT);
+                }
             case GRAPHIC_ANY: return "GRAPHIC_ANY (alle graphics)";
             case PROJECTILE_SELF:
-                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_SELF ?"; return "PROJECTILE_SELF "+projectileConfig.getProjectileId();
+                if (projectileConfig==null) return "PROJECTILE_SELF ?"; {
+                    java.util.List<Integer> pSelf = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
+                    if (pSelf.isEmpty()) return "PROJECTILE_SELF ?"; return "PROJECTILE_SELF "+shortJoin(pSelf);
+                }
             case PROJECTILE_TARGET:
-                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_TARGET ?"; return "PROJECTILE_TARGET "+projectileConfig.getProjectileId();
+                if (projectileConfig==null) return "PROJECTILE_TARGET ?"; {
+                    java.util.List<Integer> pT = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
+                    if (pT.isEmpty()) return "PROJECTILE_TARGET ?"; return "PROJECTILE_TARGET "+shortJoin(pT);
+                }
             case PROJECTILE_ANY:
-                if (projectileConfig==null || projectileConfig.getProjectileId()==null) return "PROJECTILE_ANY ?";
-                return "PROJECTILE_ANY "+projectileConfig.getProjectileId();
+                if (projectileConfig==null) return "PROJECTILE_ANY (alle)"; {
+                    java.util.List<Integer> pAny = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
+                    if (pAny.isEmpty()) return "PROJECTILE_ANY (alle)"; return "PROJECTILE_ANY "+shortJoin(pAny);
+                }
             case HITSPLAT_SELF:
                 if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
                 return "HITSPLAT_SELF "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
@@ -402,13 +429,15 @@ public class KPWebhookPreset
             case VARBIT:
                 if (varbitConfig==null) return "VARBIT ?";
                 String vb = "VARBIT";
-                if (varbitConfig.getVarbitId()!=null) vb += " "+varbitConfig.getVarbitId();
+                java.util.List<Integer> vbl = varbitConfig.getVarbitIds()!=null? varbitConfig.getVarbitIds(): (varbitConfig.getVarbitId()!=null? java.util.List.of(varbitConfig.getVarbitId()): java.util.List.of());
+                if (!vbl.isEmpty()) vb += " "+shortJoin(vbl);
                 if (varbitConfig.getValue()!=null) vb += " = "+varbitConfig.getValue();
                 return vb;
             case VARPLAYER:
                 if (varplayerConfig==null) return "VARPLAYER ?";
                 String vp = "VARPLAYER";
-                if (varplayerConfig.getVarplayerId()!=null) vp += " "+varplayerConfig.getVarplayerId();
+                java.util.List<Integer> vpl = varplayerConfig.getVarplayerIds()!=null? varplayerConfig.getVarplayerIds(): (varplayerConfig.getVarplayerId()!=null? java.util.List.of(varplayerConfig.getVarplayerId()): java.util.List.of());
+                if (!vpl.isEmpty()) vp += " "+shortJoin(vpl);
                 if (varplayerConfig.getValue()!=null) vp += " = "+varplayerConfig.getValue();
                 return vp;
             default: return "?";
@@ -439,5 +468,12 @@ public class KPWebhookPreset
             default:
                 return "ABOVE ";
         }
+    }
+
+    private static String shortJoin(java.util.List<Integer> ids) {
+        if (ids==null || ids.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i=0;i<ids.size();i++) { if (i>0) sb.append(','); if (sb.length()>24) { sb.append("..."); break; } sb.append(ids.get(i)); }
+        return sb.toString();
     }
 }

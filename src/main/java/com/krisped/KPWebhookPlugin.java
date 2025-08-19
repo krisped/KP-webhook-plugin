@@ -30,6 +30,7 @@ import com.krisped.commands.overlaytext.OverlayTextOverlay;
 import com.krisped.commands.overlaytext.OverlayTextCommandHandler;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SpriteManager;
+import net.runelite.client.Notifier; // added for RuneLite notifications
 
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
@@ -47,11 +48,80 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        description = "Triggers: MANUAL, STAT, WIDGET, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
         tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile"}
 )
 public class KPWebhookPlugin extends Plugin
 {
+    // === Chat message type alias map (expanded) ===
+    private static final Map<String, ChatMessageType> CHAT_TYPE_ALIASES = new HashMap<>();
+    private static final Set<String> CHAT_SUFFIXES = new LinkedHashSet<>(Arrays.asList(
+            "RECEIVED","SENT","IN","OUT","MESSAGE","MSG","CHAT"));
+    private static String normKey(String s) {
+        if (s == null) return ""; return s.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]","" );
+    }
+    private static void registerAlias(Map<String, ChatMessageType> map, String canonical, String... aliases) {
+        ChatMessageType base = map.get(canonical);
+        if (base == null) return; // only register if canonical enum present in this client build
+        for (String a : aliases) {
+            if (a == null || a.isBlank()) continue;
+            String up = a.toUpperCase(Locale.ROOT);
+            map.put(up, base);
+            map.put(normKey(up), base); // normalized (underscores etc removed)
+        }
+    }
+    static {
+        try {
+            // Load all existing enum names directly.
+            for (ChatMessageType t : ChatMessageType.values()) {
+                String up = t.name().toUpperCase(Locale.ROOT);
+                CHAT_TYPE_ALIASES.put(up, t);
+                CHAT_TYPE_ALIASES.put(normKey(up), t);
+            }
+            // Core canonical names we may rely on (only if present in this client build)
+            registerAlias(CHAT_TYPE_ALIASES, "GAMEMESSAGE",
+                    "GAME", "GAME_MESSAGE", "SYSTEM", "INFO", "GAMEMSG");
+            registerAlias(CHAT_TYPE_ALIASES, "PRIVATECHAT",
+                    "PRIVATE", "PM", "PRIV", "TELL", "WHISPER", "PRIVATE_MESSAGE", "PRIVATE_MESSAGE_RECEIVED", "PM_IN", "PRIVATE_IN", "PRIVMSG");
+            registerAlias(CHAT_TYPE_ALIASES, "PRIVATECHATOUT",
+                    "PRIVATE_OUT", "PM_OUT", "PRIVATE_MESSAGE_SENT", "PM_SENT", "REPLY", "OUT_PM", "OUT_PRIVATE");
+            registerAlias(CHAT_TYPE_ALIASES, "FRIENDSCHAT",
+                    "FRIENDS_CHAT", "FRIEND_CHAT", "FC", "FRIENDSCLAN", "FRIENDSCHAT");
+            registerAlias(CHAT_TYPE_ALIASES, "CLAN_CHAT",
+                    "CLAN", "CC", "CLANCHAT", "CLANMAIN");
+            registerAlias(CHAT_TYPE_ALIASES, "CLAN_GUEST_CHAT",
+                    "GUEST_CLAN", "GUEST_CC", "GUESTCLAN", "CLAN_GUEST", "CLANGUESTCHAT");
+            registerAlias(CHAT_TYPE_ALIASES, "TRADE",
+                    "TRADE_CHANNEL", "TRADECHAT", "TRADECHANNEL");
+            registerAlias(CHAT_TYPE_ALIASES, "TRADE_REQUEST",
+                    "TRADEREQUEST", "TRADE_REQ", "TRADE_REQ_CHANNEL");
+            registerAlias(CHAT_TYPE_ALIASES, "BROADCAST",
+                    "ANNOUNCEMENT", "ANNOUNCE");
+            registerAlias(CHAT_TYPE_ALIASES, "ENGINE",
+                    "CLIENT", "ENGINE_MSG");
+            registerAlias(CHAT_TYPE_ALIASES, "SPAM",
+                    "FILTERED", "JUNK");
+            registerAlias(CHAT_TYPE_ALIASES, "PUBLICCHAT",
+                    "PUBLIC", "SAY", "CHAT_PUBLIC");
+            registerAlias(CHAT_TYPE_ALIASES, "MODCHAT",
+                    "MOD_PUBLIC", "MODERATOR_CHAT");
+            registerAlias(CHAT_TYPE_ALIASES, "MODPRIVATECHAT",
+                    "MOD_PM", "MODPRIVATE", "MOD_WHISPER");
+            registerAlias(CHAT_TYPE_ALIASES, "MODPRIVATECHATOUT",
+                    "MOD_PM_OUT", "MODPRIVATEOUT", "MOD_WHISPER_OUT");
+            registerAlias(CHAT_TYPE_ALIASES, "ITEM_EXAMINE",
+                    "EXAMINE_ITEM", "ITEMEXAMINE");
+            registerAlias(CHAT_TYPE_ALIASES, "NPC_EXAMINE",
+                    "EXAMINE_NPC", "NPCEXAMINE");
+            registerAlias(CHAT_TYPE_ALIASES, "OBJECT_EXAMINE",
+                    "EXAMINE_OBJECT", "OBJECTEXAMINE");
+            registerAlias(CHAT_TYPE_ALIASES, "SLAYER",
+                    "SLAYER_TASK", "SLAYERTASK");
+            registerAlias(CHAT_TYPE_ALIASES, "XP_DROP",
+                    "XPDROP", "XP", "GAINED_XP");
+        } catch (Exception ignored) { }
+    }
+
     @Inject private Client client;
     @Inject private ClientThread clientThread;
     @Inject private ClientToolbar clientToolbar;
@@ -71,6 +141,7 @@ public class KPWebhookPlugin extends Plugin
     @Inject private OverlayTextCommandHandler overlayTextCommandHandler;
     @Inject private ItemManager itemManager; // for IMG_* item icons
     @Inject private SpriteManager spriteManager; // for IMG_* sprite icons
+    @Inject private Notifier notifier; // RuneLite notifier
 
     private KPWebhookPanel panel;
     private NavigationButton navButton;
@@ -206,7 +277,7 @@ public class KPWebhookPlugin extends Plugin
         rules.addAll(storage.loadAll());
         for (KPWebhookPreset r : rules)
             if (r.getId() >= nextId) nextId = r.getId() + 1;
-        refreshPanelTable();
+        panel.refreshTable();
         log.info("KP Webhook started. {} presets loaded. Default webhook set? {}",
                 rules.size(),
                 (config.defaultWebhookUrl()!=null && !config.defaultWebhookUrl().isBlank()));
@@ -242,6 +313,124 @@ public class KPWebhookPlugin extends Plugin
         {
             try { lastRealLevel.put(skill, client.getRealSkillLevel(skill)); } catch (Exception ignored) {}
         }
+    }
+
+    // ===== Missing helper methods =====
+    public List<KPWebhookPreset> getRules() {
+        return rules;
+    }
+
+    public void addOrUpdate(KPWebhookPreset preset) {
+        if (preset == null) return;
+
+        // Remove existing preset with same ID if it exists
+        rules.removeIf(r -> r.getId() == preset.getId());
+
+        // Add the new/updated preset
+        rules.add(preset);
+
+        // Save to storage
+        savePreset(preset);
+    }
+
+    public void deleteRule(int id) {
+        KPWebhookPreset preset = find(id);
+        if (preset != null) {
+            rules.remove(preset);
+            if (storage != null) {
+                storage.delete(preset);
+            }
+        }
+    }
+
+    public void toggleActive(int id) {
+        KPWebhookPreset preset = find(id);
+        if (preset != null) {
+            preset.setActive(!preset.isActive());
+            savePreset(preset);
+        }
+    }
+
+    private KPWebhookPreset find(int id) {
+        return rules.stream().filter(r -> r.getId() == id).findFirst().orElse(null);
+    }
+
+    private void savePreset(KPWebhookPreset preset) {
+        if (storage != null && preset != null) {
+            storage.save(preset, null);
+        }
+    }
+
+    private void saveAllPresets() {
+        if (storage != null) {
+            for (KPWebhookPreset preset : rules) {
+                storage.save(preset, null);
+            }
+        }
+    }
+
+    private boolean hitsplatMatches(KPWebhookPreset.HitsplatConfig config, int amount) {
+        if (config == null) return false;
+        Integer v = config.getValue();
+        if (v == null) return false; // require threshold set
+        KPWebhookPreset.HitsplatConfig.Mode mode = config.getMode();
+        if (mode == null) mode = KPWebhookPreset.HitsplatConfig.Mode.GREATER;
+        switch (mode) {
+            case GREATER: return amount > v;
+            case GREATER_EQUAL: return amount >= v;
+            case EQUAL: return amount == v;
+            case LESS_EQUAL: return amount <= v;
+            case LESS: return amount < v;
+            default: return false;
+        }
+    }
+
+    private void executeHitsplatRule(KPWebhookPreset rule, int amount, boolean self) {
+        if (rule == null) return;
+        stopRule(rule.getId());
+        String cmds = rule.getCommands();
+        if (cmds == null || cmds.isBlank()) return;
+        Map<String,String> ctx = new HashMap<>();
+        ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
+        ctx.put("TARGET", getCurrentTargetName());
+        ctx.put("$TARGET", getCurrentTargetName());
+        ctx.put("stat", "");
+        ctx.put("current", "");
+        ctx.put("value", "");
+        ctx.put("widgetGroup", "");
+        ctx.put("widgetChild", "");
+        ctx.put("time", Instant.now().toString());
+        ctx.put("otherPlayer", "");
+        ctx.put("otherCombat", "");
+        ctx.put("npcName", "");
+        ctx.put("npcId", "");
+        // Hitsplat specific
+        ctx.put("HITSPLAT", String.valueOf(amount));
+        if (self) {
+            ctx.put("HITSPLAT_SELF", String.valueOf(amount));
+            ctx.put("HITSPLAT_TARGET", "");
+        } else {
+            ctx.put("HITSPLAT_SELF", "");
+            ctx.put("HITSPLAT_TARGET", String.valueOf(amount));
+        }
+        try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
+        for (Skill s : Skill.values()) {
+            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
+                ctx.put("$"+s.name(), String.valueOf(real));
+                ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
+                ctx.put(s.name(), String.valueOf(real));
+                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
+        }
+        List<PendingCommand> list = new ArrayList<>();
+        for (String rawLine : cmds.split("\r?\n")) {
+            String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
+            String upper = line.toUpperCase(Locale.ROOT);
+            if (upper.startsWith("SLEEP ")) { long ms=0; try { ms = Long.parseLong(line.substring(6).trim()); } catch (Exception ignored) {} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) {}
+            else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try { ticks=Integer.parseInt(parts[1]); } catch (Exception ignored) {} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
+        if (list.isEmpty()) return;
+        CommandSequence seq = new CommandSequence();
+        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0L;
+        activeSequences.add(seq);
     }
 
     /* ================= Game Tick ================= */
@@ -525,9 +714,11 @@ public class KPWebhookPlugin extends Plugin
                     else if (a instanceof NPC) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), null, (NPC)a);
                     else executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                 } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_SELF && a == client.getLocalPlayer()) {
-                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig(); if (cfg!=null && cfg.getAnimationId()!=null && cfg.getAnimationId()==anim) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
+                    if (cfg!=null && matchesId(cfg.getAnimationId(), cfg.getAnimationIds(), anim)) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                 } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.ANIMATION_TARGET && a == currentTarget) {
-                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig(); if (cfg!=null && cfg.getAnimationId()!=null && cfg.getAnimationId()==anim) {
+                    KPWebhookPreset.AnimationConfig cfg = r.getAnimationConfig();
+                    if (cfg!=null && matchesId(cfg.getAnimationId(), cfg.getAnimationIds(), anim)) {
                         if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null); else if (a instanceof NPC) executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig(),null,(NPC)a); else executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig());
                     }
                 }
@@ -556,9 +747,9 @@ public class KPWebhookPlugin extends Plugin
                     else if (a instanceof NPC) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), null, (NPC)a);
                     else executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                 } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.GRAPHIC_SELF && a == client.getLocalPlayer()) {
-                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && cfg.getGraphicId()!=null && cfg.getGraphicId()==g) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && matchesId(cfg.getGraphicId(), cfg.getGraphicIds(), g)) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                 } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.GRAPHIC_TARGET && a == currentTarget) {
-                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && cfg.getGraphicId()!=null && cfg.getGraphicId()==g) {
+                    KPWebhookPreset.GraphicConfig cfg = r.getGraphicConfig(); if (cfg!=null && matchesId(cfg.getGraphicId(), cfg.getGraphicIds(), g)) {
                         if (a instanceof Player) executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (Player)a, null); else if (a instanceof NPC) executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig(),null,(NPC)a); else executeRule(r,null,-1,r.getStatConfig(),r.getWidgetConfig());
                     }
                 }
@@ -578,7 +769,6 @@ public class KPWebhookPlugin extends Plugin
             Actor projTarget = null;
             try { projTarget = p.getInteracting(); } catch (Exception ignored) {}
             Player local = client.getLocalPlayer();
-            // Debug logging (so user can see projectile ids & categorize)
             if (debugWindow != null && debugWindow.isVisible()) {
                 try {
                     if (projTarget == currentTarget && currentTarget != null) {
@@ -592,26 +782,26 @@ public class KPWebhookPlugin extends Plugin
             for (KPWebhookPreset r : getRules()) {
                 if (!r.isActive()) continue;
                 KPWebhookPreset.TriggerType tt = r.getTriggerType();
-                if (tt != KPWebhookPreset.TriggerType.PROJECTILE_ANY &&
-                    tt != KPWebhookPreset.TriggerType.PROJECTILE_SELF &&
-                    tt != KPWebhookPreset.TriggerType.PROJECTILE_TARGET) continue;
+                if (tt != KPWebhookPreset.TriggerType.PROJECTILE_ANY && tt != KPWebhookPreset.TriggerType.PROJECTILE_SELF && tt != KPWebhookPreset.TriggerType.PROJECTILE_TARGET) continue;
                 KPWebhookPreset.ProjectileConfig pc = r.getProjectileConfig();
                 if (pc == null) continue; // must exist
-                Integer want = pc.getProjectileId();
+                boolean matchList = matchesId(pc.getProjectileId(), pc.getProjectileIds(), id);
                 switch (tt) {
                     case PROJECTILE_ANY:
-                        // Optional id filter: if unset => match all, else match specific id
-                        if (want == null || want == id) {
+                        // If list empty & single null => match all, else filter
+                        if (pc.getProjectileIds()==null && pc.getProjectileId()==null) {
+                            executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
+                        } else if (matchList) {
                             executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                         }
                         break;
-                    case PROJECTILE_SELF: // projectile whose target matches currentTarget (id required)
-                        if (want != null && want == id && projTarget != null && projTarget == currentTarget) {
+                    case PROJECTILE_SELF:
+                        if (matchList && projTarget != null && projTarget == currentTarget) {
                             executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig(), (currentTarget instanceof Player)?(Player)currentTarget:null, (currentTarget instanceof NPC)?(NPC)currentTarget:null);
                         }
                         break;
-                    case PROJECTILE_TARGET: // projectile targeting local player (id required)
-                        if (want != null && want == id && projTarget != null && projTarget == local) {
+                    case PROJECTILE_TARGET:
+                        if (matchList && projTarget != null && projTarget == local) {
                             executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
                         }
                         break;
@@ -637,16 +827,16 @@ public class KPWebhookPlugin extends Plugin
             if (!r.isActive()) continue;
             if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARBIT) {
                 KPWebhookPreset.VarbitConfig cfg = r.getVarbitConfig();
-                if (cfg == null || cfg.getVarbitId() == null || cfg.getValue() == null) continue;
-                if (cfg.getVarbitId() == varbitId && cfg.getValue() == newValue) {
+                if (cfg == null || cfg.getValue() == null) continue;
+                if (matchesId(cfg.getVarbitId(), cfg.getVarbitIds(), varbitId) && cfg.getValue() == newValue) {
                     executeRule(r, null, -1, null, null, null);
                 }
             } else if (r.getTriggerType() == KPWebhookPreset.TriggerType.VARPLAYER) {
                 try {
                     int varpId = ev.getVarpId();
                     KPWebhookPreset.VarplayerConfig cfg = r.getVarplayerConfig();
-                    if (cfg == null || cfg.getVarplayerId() == null || cfg.getValue() == null) continue;
-                    if (varpId == cfg.getVarplayerId()) {
+                    if (cfg == null || cfg.getValue() == null) continue;
+                    if (matchesId(cfg.getVarplayerId(), cfg.getVarplayerIds(), varpId)) {
                         int val = client.getVarpValue(varpId);
                         if (val == cfg.getValue()) {
                             executeRule(r, null, -1, null, null, null);
@@ -764,10 +954,13 @@ public class KPWebhookPlugin extends Plugin
     {
         if (cfg == null || p == null) return false;
         if (cfg.isAll()) return true;
+        String actual = sanitizePlayerName(p.getName()).trim().toLowerCase(Locale.ROOT);
+        if (cfg.getNames()!=null && !cfg.getNames().isEmpty()) {
+            for (String n : cfg.getNames()) if (actual.equalsIgnoreCase(n)) return true;
+        }
         if (cfg.getName()!=null && !cfg.getName().isBlank())
         {
-            String target = sanitizePlayerName(cfg.getName()).trim();
-            String actual = sanitizePlayerName(p.getName()).trim();
+            String target = sanitizePlayerName(cfg.getName()).trim().toLowerCase(Locale.ROOT);
             if (actual.equalsIgnoreCase(target)) return true;
         }
         if (cfg.getCombatRange()!=null)
@@ -918,98 +1111,13 @@ public class KPWebhookPlugin extends Plugin
         activeSequences.add(seq);
     }
 
-    private boolean wildcardMatch(String text, String pattern)
-    {
-        if (pattern == null || pattern.isEmpty()) return true; // no filter
-        if (text == null) return false;
-        String p = pattern.trim();
-        if (p.equals("*")) return true; // match all
-        // user uses _ for space
-        p = p.replace('_', ' ');
-        String src = text;
-        // case-insensitive compare using lowercase
-        String pLower = p.toLowerCase(Locale.ROOT);
-        String srcLower = src.toLowerCase(Locale.ROOT);
-        // No wildcard => substring search
-        if (!pLower.contains("*")) {
-            return srcLower.contains(pLower);
+    // Multi-id helper (single legacy id OR list)
+    private boolean matchesId(Integer single, java.util.List<Integer> list, int value) {
+        if (list != null && !list.isEmpty()) {
+            for (Integer i : list) if (i != null && i == value) return true;
         }
-        // Split on * and ensure order
-        String[] parts = pLower.split("\\*", -1); // keep empties for leading/trailing *
-        int index = 0;
-        boolean firstPart = true;
-        for (int i = 0; i < parts.length; i++)
-        {
-            String part = parts[i];
-            if (part.isEmpty()) {
-                // Consecutive * or leading/trailing * -> skip
-                continue;
-            }
-            int found = srcLower.indexOf(part, index);
-            if (found == -1) return false;
-            // If this is the first non-empty part and pattern doesn't start with * it must be at start
-            if (firstPart && !pLower.startsWith("*") && found != 0) return false;
-            index = found + part.length();
-            firstPart = false;
-        }
-        // If pattern does not end with * then last non-empty part must align with end of string
-        if (!pLower.endsWith("*"))
-        {
-            // find last non-empty part
-            for (int i = parts.length - 1; i >= 0; i--)
-            {
-                if (!parts[i].isEmpty())
-                {
-                    return srcLower.endsWith(parts[i]);
-                }
-            }
-        }
-        return true;
+        return single != null && single == value;
     }
-
-    private void executeMessageRule(KPWebhookPreset rule, String messageText, int messageTypeId)
-    {
-        stopRule(rule.getId());
-        String cmds = rule.getCommands(); if (cmds==null || cmds.isEmpty()) return;
-        Map<String,String> ctx = new HashMap<>();
-        ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
-        ctx.put("stat", "");
-        ctx.put("current", "");
-        ctx.put("value", "");
-        ctx.put("widgetGroup", "");
-        ctx.put("widgetChild", "");
-        ctx.put("time", Instant.now().toString());
-        ctx.put("otherPlayer", "");
-        ctx.put("otherCombat", "");
-        ctx.put("message", messageText);
-        ctx.put("messageTypeId", String.valueOf(messageTypeId));
-        ctx.put("TARGET", getCurrentTargetName());
-        ctx.put("$TARGET", getCurrentTargetName());
-        ctx.put("HITSPLAT_SELF", "");
-        ctx.put("HITSPLAT_TARGET", "");
-        ctx.put("HITSPLAT", "");
-        try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
-        ctx.put("STAT", "");
-        ctx.put("CURRENT_STAT", "");
-        for (Skill s : Skill.values()) {
-            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
-                ctx.put("$"+s.name(), String.valueOf(real));
-                ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
-                ctx.put(s.name(), String.valueOf(real));
-                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
-        }
-        List<PendingCommand> list = new ArrayList<>();
-        for (String rawLine : cmds.split("\r?\n")) {
-            String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
-            String upper = line.toUpperCase(Locale.ROOT);
-            if (upper.startsWith("SLEEP ")) { long ms=0; try{ ms=Long.parseLong(line.substring(6).trim()); }catch(Exception ignored){} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) {}
-            else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try{ ticks=Integer.parseInt(parts[1]); }catch(Exception ignored){} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
-        if (list.isEmpty()) return;
-        CommandSequence seq = new CommandSequence();
-        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0;
-        activeSequences.add(seq);
-    }
-
 
     private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx)
     {
@@ -1025,7 +1133,8 @@ public class KPWebhookPlugin extends Plugin
             if (rid >= 0) stopRule(rid);
             return;
         }
-        if (upper.startsWith("NOTIFY ")) { addGameMessage(expand(line.substring("NOTIFY ".length()), ctx)); }
+        if (upper.startsWith("NOTIFY ")) { notifyRuneLite(expand(line.substring("NOTIFY ".length()), ctx)); }
+        else if (upper.startsWith("CUSTOM_MESSAGE ")) { handleCustomMessage(line.substring("CUSTOM_MESSAGE ".length()), ctx); }
         else if (upper.startsWith("WEBHOOK ")) { if (!webhookAvailable(rule)) return; sendWebhookMessage(resolveWebhook(rule), expand(line.substring("WEBHOOK ".length()), ctx)); }
         else if (upper.startsWith("SCREENSHOT")) { if (!webhookAvailable(rule)) return; String rest = line.length()>"SCREENSHOT".length()? line.substring("SCREENSHOT".length()).trim():""; captureAndSendSimpleScreenshot(resolveWebhook(rule), expand(rest, ctx)); }
         else if (P_TEXT_UNDER.matcher(line).find() || P_TEXT_OVER.matcher(line).find() || P_TEXT_CENTER.matcher(line).find()) {
@@ -1035,7 +1144,7 @@ public class KPWebhookPlugin extends Plugin
             handleImageCommand(rule, line, ctx);
         }
         else if (overlayTextCommandHandler.handle(line, rule)) { /* OVERLAY_TEXT handled */ }
-        else if (infoboxCommandHandler.handle(line, rule, ctx)) { /* highlight handled */ }
+        else if (infoboxCommandHandler.handle(line, rule, ctx)) { /* infobox handled */ }
         else if (highlightCommandHandler.handle(line, rule)) { /* highlight handled */ }
         else { /* unknown command */ }
     }
@@ -1049,205 +1158,6 @@ public class KPWebhookPlugin extends Plugin
         removePersistentOverheadsForRule(ruleId);
         cancelSequencesForRule(ruleId);
         overheadImages.removeIf(i -> i != null && i.ruleId == ruleId); // remove rule images
-    }
-
-    private void captureAndSendSimpleScreenshot(String webhook, String message)
-    {
-        if (webhook == null || webhook.isBlank()) return;
-        long now = System.currentTimeMillis();
-        if (now - lastScreenshotRequestMs < SCREENSHOT_COOLDOWN_MS)
-        { log.debug("Screenshot skipped due to cooldown ({} ms since last)", now - lastScreenshotRequestMs); return; }
-        lastScreenshotRequestMs = now;
-        // Prefer internal buffers first (works even when minimized) before canvas/robot.
-        if (tryClientBufferedImage(webhook, message)) return;
-        // Only attempt canvas / repaint path if canvas is visible (avoid black/minimized issues)
-        if (isCanvasVisible()) {
-            if (tryRuneLiteScreenshot(webhook, message)) return;
-            if (tryRobotScreenshot(webhook, message)) return; // last resort only when visible
-        }
-        // If still nothing, schedule fallback attempts to internal capture
-        clientThread.invokeLater(() -> SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, 0)));
-    }
-
-    private boolean tryRuneLiteScreenshot(String webhook, String message)
-    {
-        try {
-            Canvas canvas = client.getCanvas(); if (canvas == null) return false;
-            SwingUtilities.invokeAndWait(() -> { try { canvas.repaint(); Thread.sleep(40); } catch (Exception ignored) {} });
-            BufferedImage img = new BufferedImage(canvas.getWidth(), canvas.getHeight(), BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = img.createGraphics();
-            try { canvas.paint(g); if (!isImageValid(img)) canvas.update(g); } finally { g.dispose(); }
-            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    private boolean tryClientBufferedImage(String webhook, String message)
-    {
-        try {
-            String[] names = {"getGameImage","getBufferedImage","getCanvasImage","getScreenshot","createScreenshot","getDrawImage"};
-            for (String n : names) {
-                try {
-                    java.lang.reflect.Method m = client.getClass().getMethod(n);
-                    if (BufferedImage.class.isAssignableFrom(m.getReturnType())) {
-                        Object o = m.invoke(client);
-                        if (o instanceof BufferedImage) {
-                            BufferedImage img = copyBuffered((BufferedImage)o);
-                            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-            for (java.lang.reflect.Method m : client.getClass().getMethods()) {
-                try {
-                    if (m.getParameterCount()==0 && BufferedImage.class.isAssignableFrom(m.getReturnType())) {
-                        Object o = m.invoke(client);
-                        if (o instanceof BufferedImage) {
-                            BufferedImage img = copyBuffered((BufferedImage)o);
-                            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    private boolean tryRobotScreenshot(String webhook, String message)
-    {
-        try {
-            Canvas canvas = client.getCanvas(); if (canvas == null) return false;
-            java.awt.Point p = canvas.getLocationOnScreen(); Dimension d = canvas.getSize();
-            if (d.width <=0 || d.height<=0) return false;
-            Thread.sleep(60);
-            Robot r = new Robot();
-            BufferedImage img = r.createScreenCapture(new Rectangle(p.x, p.y, d.width, d.height));
-            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    private void captureCanvasEDT(String webhook, String message, int attempt)
-    {
-        final int MAX=4;
-        try {
-            if (!SwingUtilities.isEventDispatchThread()) { SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, attempt)); return; }
-            Canvas canvas = client.getCanvas(); if (canvas==null) return;
-            int w = canvas.getWidth(), h = canvas.getHeight(); if (w<=0||h<=0){ scheduleRetry(webhook,message,attempt,MAX); return; }
-            BufferedImage img = new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = img.createGraphics();
-            try { canvas.paint(g); if (!isImageValid(img)) canvas.update(g);} finally { g.dispose(); }
-            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return; }
-            if (attempt < MAX) { scheduleRetry(webhook,message,attempt,MAX); }
-        } catch (Exception e) {
-            if (attempt < MAX) scheduleRetry(webhook,message,attempt,MAX);
-        }
-    }
-
-    private void scheduleRetry(String webhook, String message, int attempt, int max)
-    { if (attempt >= max) return; executorService.schedule(() -> SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, attempt+1)), 60, TimeUnit.MILLISECONDS); }
-
-    private boolean isImageValid(BufferedImage img) { return img != null && !isMostlyBlack(img) && !isMostlyWhite(img); }
-
-    // Image luminance helpers (re-added)
-    private boolean isMostlyBlack(BufferedImage img) {
-        if (img == null) return false;
-        try {
-            int w = img.getWidth(), h = img.getHeight();
-            long dark = 0, total = 0; int stepX = Math.max(1, w/50), stepY = Math.max(1, h/50);
-            for (int y=0; y<h; y+=stepY) {
-                for (int x=0; x<w; x+=stepX) {
-                    int rgb = img.getRGB(x,y);
-                    int r=(rgb>>16)&0xFF, g=(rgb>>8)&0xFF, b=rgb&0xFF;
-                    int lum = (r*30 + g*59 + b*11)/100;
-                    if (lum < 5) dark++;
-                    total++;
-                }
-            }
-            return total>0 && dark*100/total > 95;
-        } catch (Exception e) { return false; }
-    }
-    private boolean isMostlyWhite(BufferedImage img) {
-        if (img == null) return false;
-        try {
-            int w = img.getWidth(), h = img.getHeight();
-            long bright=0, total=0; int stepX=Math.max(1,w/50), stepY=Math.max(1,h/50);
-            for (int y=0; y<h; y+=stepY) {
-                for (int x=0; x<w; x+=stepX) {
-                    int rgb = img.getRGB(x,y);
-                    int r=(rgb>>16)&0xFF, g=(rgb>>8)&0xFF, b=rgb&0xFF;
-                    int lum = (r*30 + g*59 + b*11)/100;
-                    if (lum > 240) bright++;
-                    total++;
-                }
-            }
-            return total>0 && bright*100/total > 90;
-        } catch (Exception e) { return false; }
-    }
-
-    private String expand(String text, Map<String,String> ctx)
-    {
-        if (text == null || ctx == null) return text;
-        // Replace longer keys first to avoid partial collisions (e.g. HITSPLAT_SELF vs HITSPLAT)
-        java.util.List<String> keys = new java.util.ArrayList<>(ctx.keySet());
-        keys.sort((a,b)->Integer.compare(b.length(), a.length()));
-        for (String key : keys)
-        {
-            String value = ctx.get(key);
-            if (key == null || value == null) continue;
-            // Exact token patterns
-            text = text.replace("${" + key + "}", value);
-            text = text.replace("{{" + key + "}}", value);
-            text = text.replace("$" + key, value);
-            // Legacy keys that themselves start with $
-            if (key.startsWith("$")) {
-                text = text.replace(key, value);
-            }
-        }
-        return text;
-    }
-
-    private BufferedImage copyBuffered(BufferedImage src)
-    {
-        if (src == null) return null;
-        int w = src.getWidth();
-        int h = src.getHeight();
-        if (w <= 0 || h <= 0) return null;
-        try {
-            BufferedImage copy = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g2 = copy.createGraphics();
-            g2.setComposite(AlphaComposite.Src);
-            g2.drawImage(src, 0, 0, null);
-            g2.dispose();
-            return copy;
-        } catch (Exception e) {
-            return src;
-        }
-    }
-
-    private void addGameMessage(String message)
-    {
-        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", message, null);
-    }
-
-    private void sendWebhookMessage(String webhook, String message)
-    {
-        executorService.execute(() -> {
-            try {
-                String json = gson.toJson(Map.of("content", message));
-                RequestBody body = RequestBody.create(JSON, json);
-                Request request = new Request.Builder().url(webhook).post(body).build();
-                try (Response response = okHttpClient.newCall(request).execute()) {
-                    if (!response.isSuccessful()) {
-                        log.warn("Webhook failed: {}", response.code());
-                    } else {
-                        log.info("✅ Message sent to Discord");
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Error sending webhook", e);
-            }
-        });
     }
 
     // Added back: stop all active sequences, texts, highlights
@@ -1276,33 +1186,117 @@ public class KPWebhookPlugin extends Plugin
     private String normalizeName(String s) { return s==null?"":s.replace('_',' ').trim().toLowerCase(Locale.ROOT); }
     public Actor getCurrentTargetActor() { return currentTarget; }
     private boolean isCanvasVisible() { try { Canvas c = client.getCanvas(); return c != null && c.isShowing() && c.getWidth()>0 && c.getHeight()>0; } catch (Exception e){ return false; } }
-    private void sendImageToWebhook(BufferedImage img, String webhook, String message) {
-        if (img == null || webhook == null || webhook.isBlank()) return;
-        executorService.execute(() -> {
-            try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-                ImageIO.write(img, "png", baos);
-                byte[] png = baos.toByteArray();
-                MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM);
-                if (message != null && !message.isBlank()) mb.addFormDataPart("content", message);
-                mb.addFormDataPart("file", "screenshot.png", RequestBody.create(PNG, png));
-                Request request = new Request.Builder().url(webhook).post(mb.build()).build();
-                try (Response response = okHttpClient.newCall(request).execute()) {
-                    if (!response.isSuccessful()) log.warn("Webhook image failed: {}", response.code());
-                }
-            } catch (Exception e) { log.warn("Failed to send image webhook", e); }
-        });
+
+    private String expand(String text, Map<String,String> ctx)
+    {
+        if (text == null || ctx == null) return text;
+        // Replace longer keys first to avoid partial collisions (e.g. HITSPLAT_SELF vs HITSPLAT)
+        java.util.List<String> keys = new java.util.ArrayList<>(ctx.keySet());
+        keys.sort((a,b)->Integer.compare(b.length(), a.length()));
+        for (String key : keys)
+        {
+            String value = ctx.get(key);
+            if (key == null || value == null) continue;
+            // Exact token patterns
+            text = text.replace("${" + key + "}", value);
+            text = text.replace("{{" + key + "}}", value);
+            text = text.replace("$" + key, value);
+            // Legacy keys that themselves start with $
+            if (key.startsWith("$")) {
+                text = text.replace(key, value);
+            }
+        }
+        return text;
     }
-    // ===== Restored panel refresh helper =====
-    private void refreshPanelTable() {
-        if (panel == null) return;
+
+    private void addGameMessage(String message)
+    {
+        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", message, null);
+    }
+
+    // New: NOTIFY command uses RuneLite Notifier + standard chat message
+    private void notifyRuneLite(String message)
+    {
+        if (message == null || message.isBlank()) return;
+        try { if (notifier != null) { notifier.notify(message); } } catch (Exception e) { log.debug("Notifier failed", e); }
+        try { client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", message, null); } catch (Exception e) { log.debug("Chat notify failed", e); }
+    }
+
+    private void handleCustomMessage(String remainder, Map<String,String> ctx) {
+        if (remainder == null || remainder.isBlank()) return;
+        String[] parts = remainder.trim().split("\\s+", 2);
+        if (parts.length < 2) return; // need id + text
+        String idPart = parts[0];
+        String textPart = parts[1];
+        ChatMessageType type = resolveChatMessageType(idPart);
+        String expanded = expand(textPart, ctx);
+        try { client.addChatMessage(type, "", expanded, null); } catch (Exception e) { log.debug("CUSTOM_MESSAGE failed", e); }
+    }
+
+    private ChatMessageType resolveChatMessageType(String token) {
+        if (token == null) return ChatMessageType.GAMEMESSAGE;
+        String up = token.trim().toUpperCase(Locale.ROOT);
+        // Direct lookup (exact or previously normalized)
+        ChatMessageType t = CHAT_TYPE_ALIASES.get(up);
+        if (t != null) return t;
+        // Normalized lookup (strip non-alphanumeric)
+        String norm = normKey(up);
+        t = CHAT_TYPE_ALIASES.get(norm);
+        if (t != null) return t;
+        // Progressive suffix trimming
+        String work = up;
+        boolean trimmed = true;
+        while (trimmed) {
+            trimmed = false;
+            for (String suf : CHAT_SUFFIXES) {
+                if (work.endsWith("_" + suf)) { work = work.substring(0, work.length() - (suf.length()+1)); trimmed = true; break; }
+                if (work.endsWith(suf) && work.length() > suf.length()+1) { work = work.substring(0, work.length() - suf.length()); trimmed = true; break; }
+            }
+            if (trimmed) {
+                ChatMessageType tt = CHAT_TYPE_ALIASES.get(work);
+                if (tt != null) return tt;
+                tt = CHAT_TYPE_ALIASES.get(normKey(work));
+                if (tt != null) return tt;
+            }
+        }
+        // Numeric id or ordinal path
+        Integer wanted = null;
+        try { wanted = Integer.parseInt(up); } catch (Exception ignored) {}
+        ChatMessageType fallbackByOrdinal = null;
+        if (wanted != null) {
+            for (ChatMessageType ct : ChatMessageType.values()) {
+                Integer idVal = extractTypeId(ct);
+                if (idVal != null && idVal.equals(wanted)) return ct;
+                if (ct.ordinal() == wanted && fallbackByOrdinal == null) fallbackByOrdinal = ct;
+            }
+            if (fallbackByOrdinal != null) return fallbackByOrdinal;
+        }
+        return ChatMessageType.GAMEMESSAGE;
+    }
+
+    private Integer extractTypeId(ChatMessageType t) {
+        if (t == null) return null;
+        // Try known accessor names without hard-coding mapping
+        String[] methodNames = {"getType","getId","getValue"};
+        for (String mn : methodNames) {
+            try {
+                java.lang.reflect.Method m = ChatMessageType.class.getMethod(mn);
+                Object v = m.invoke(t);
+                if (v instanceof Integer) return (Integer)v;
+            } catch (Exception ignored) {}
+        }
+        // Fallback: reflect private int fields
         try {
-            if (SwingUtilities.isEventDispatchThread()) {
-                panel.refreshTable();
-            } else {
-                SwingUtilities.invokeLater(() -> { try { panel.refreshTable(); } catch (Exception ignored) {} });
+            for (java.lang.reflect.Field f : ChatMessageType.class.getDeclaredFields()) {
+                if (f.getType() == int.class) {
+                    f.setAccessible(true);
+                    try { return f.getInt(t); } catch (Exception ignored) {}
+                }
             }
         } catch (Exception ignored) {}
+        return null;
     }
+
     // ===== Overhead text removal helpers (restored) =====
     private void removeOverheadsForRule(int ruleId, boolean includePersistent) {
         if (overheadTexts.isEmpty()) return;
@@ -1324,6 +1318,7 @@ public class KPWebhookPlugin extends Plugin
         final String prefixPersist = "PERSIST_" + ruleId + "_";
         overheadTexts.removeIf(t -> t != null && t.persistent && (t.ruleId == ruleId || (t.key != null && t.key.startsWith(prefixPersist))));
     }
+
     // ===== Overhead text creation (simplified) =====
     private void addOverheadTextFromPreset(String text, String position, KPWebhookPreset rule) {
         if (text == null || text.isBlank() || rule == null) return;
@@ -1345,6 +1340,7 @@ public class KPWebhookPlugin extends Plugin
         ActiveOverheadText ot = new ActiveOverheadText(); ot.text=text; ot.position= position!=null?position:"Above"; ot.ruleId=-1; ot.persistent=false; ot.remainingTicks=80; ot.color=Color.WHITE; ot.blink=false; ot.size=16; ot.visiblePhase=true;
         overheadTexts.add(ot);
     }
+
     // ===== Targeted text command parser (restored) =====
     private void handleTargetedTextCommand(KPWebhookPreset rule, String line, Map<String,String> ctx) {
         String raw = line.trim(); java.util.regex.Matcher m; String pos=null;
@@ -1368,6 +1364,7 @@ public class KPWebhookPlugin extends Plugin
         if (ot.remainingTicks<=0) { ot.persistent=true; ot.remainingTicks=0; }
         ot.visiblePhase=true; overheadTexts.add(ot);
     }
+
     // ===== Image command handler (restored) =====
     private void handleImageCommand(KPWebhookPreset rule, String line, Map<String,String> ctx) {
         String raw=line.trim(); java.util.regex.Matcher m; String pos=null;
@@ -1396,74 +1393,7 @@ public class KPWebhookPlugin extends Plugin
     private BufferedImage loadItem(int itemId) { try { return itemManager!=null? itemManager.getImage(itemId): null; } catch(Exception e){ return null; } }
     private BufferedImage loadSprite(int spriteId) { try { return spriteManager!=null? spriteManager.getSprite(spriteId,0): null; } catch(Exception e){ return null; } }
 
-    // ===== Added missing helper methods to resolve compile errors =====
-    public java.util.List<KPWebhookPreset> getRules() { return java.util.Collections.unmodifiableList(rules); }
-    private void savePreset(KPWebhookPreset p) { savePreset(p, null); }
-    private void savePreset(KPWebhookPreset p, String previousTitle) {
-        if (p == null || storage == null) return; try { storage.save(p, previousTitle); } catch (Exception ignored) {}
-    }
-    private void saveAllPresets() { if (storage==null) return; for (KPWebhookPreset p : rules) savePreset(p); }
-    public KPWebhookPreset find(int id) { for (KPWebhookPreset r : rules) if (r.getId()==id) return r; return null; }
-
-   // === Added CRUD helpers used by panel ===
-    public synchronized void addOrUpdate(KPWebhookPreset preset) {
-        if (preset == null) return;
-        if (preset.getId() < 0) { // new preset
-            preset.setId(nextId++);
-            rules.add(preset);
-            savePreset(preset, null);
-            refreshPanelTable();
-            return;
-        }
-        KPWebhookPreset existing = find(preset.getId());
-        if (existing == null) { // treat as new with provided id (avoid clash with nextId)
-            if (preset.getId() >= nextId) nextId = preset.getId() + 1;
-            rules.add(preset);
-            savePreset(preset, null);
-        } else {
-            String previousTitle = existing.getTitle();
-            // Replace existing object in list (keep ordering)
-            int idx = rules.indexOf(existing);
-            rules.set(idx, preset);
-            savePreset(preset, previousTitle);
-        }
-        refreshPanelTable();
-    }
-
-    public synchronized void toggleActive(int id) {
-        KPWebhookPreset r = find(id); if (r == null) return;
-        r.setActive(!r.isActive());
-        if (!r.isActive()) { // deactivate -> stop visuals & sequences
-            try { stopRule(r.getId()); } catch (Exception ignored) {}
-        } else {
-            // Reset transient runtime flags when reactivating
-            r.setLastConditionMet(false);
-            r.setLastTriggeredBoosted(Integer.MIN_VALUE);
-        }
-        savePreset(r, null);
-    }
-
-    public synchronized void deleteRule(int id) {
-        KPWebhookPreset r = find(id); if (r == null) return;
-        try { stopRule(r.getId()); } catch (Exception ignored) {}
-        rules.remove(r);
-        try { if (storage != null) storage.delete(r); } catch (Exception ignored) {}
-        refreshPanelTable();
-    }
-
-    // === Utility / helper methods restored (previously removed by truncation) ===
-    private String sanitizePlayerName(String name) {
-        if (name == null) return ""; try { String noTags = net.runelite.client.util.Text.removeTags(name); noTags = noTags.replace('\u00A0',' ').trim(); return noTags; } catch (Exception e){ return name.replace('\u00A0',' ').trim(); }
-    }
-    private String sanitizeNpcName(String name) {
-        if (name==null) return ""; try { String noTags = net.runelite.client.util.Text.removeTags(name); return noTags.replace('\u00A0',' ').trim(); } catch(Exception e){ return name.replace('\u00A0',' ').trim(); }
-    }
-    private boolean matchesNpc(KPWebhookPreset.NpcConfig cfg, NPC npc) {
-        if (cfg==null || npc==null) return false; int id = npc.getId(); String n = sanitizeNpcName(npc.getName());
-        if (cfg.getNpcIds()!=null) for (Integer i : cfg.getNpcIds()) if (i!=null && i==id) return true;
-        if (n!=null && !n.isEmpty() && cfg.getNpcNames()!=null) { String ln = n.toLowerCase(java.util.Locale.ROOT); for (String s : cfg.getNpcNames()) if (ln.equals(s)) return true; }
-        return false;
-    }
+    // ===== Added missing helpers & hitsplat handling (re-added) =====
     private void refreshPersistentStatVisuals(Skill skill, int boostedValue) { /* placeholder for future persistent stat visuals */ }
     private void cancelSequencesForRule(int ruleId) { if (activeSequences.isEmpty()) return; activeSequences.removeIf(seq -> seq!=null && seq.rule!= null && seq.rule.getId()==ruleId); }
     public void openDebugWindow() {
@@ -1513,54 +1443,175 @@ public class KPWebhookPlugin extends Plugin
         return "";
     }
 
-    private boolean hitsplatMatches(KPWebhookPreset.HitsplatConfig cfg, int amount) {
-        if (cfg == null || cfg.getValue() == null) return false;
-        int thr = cfg.getValue();
-        KPWebhookPreset.HitsplatConfig.Mode m = cfg.getMode();
-        if (m == null) m = KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
-        switch (m) {
-            case GREATER: return amount > thr;
-            case GREATER_EQUAL: return amount >= thr;
-            case EQUAL: return amount == thr;
-            case LESS_EQUAL: return amount <= thr;
-            case LESS: return amount < thr;
+    private String sanitizePlayerName(String name) {
+        if (name == null) return ""; try { String noTags = net.runelite.client.util.Text.removeTags(name); noTags = noTags.replace('\u00A0',' ').trim(); return noTags; } catch (Exception e){ return name.replace('\u00A0',' ').trim(); }
+    }
+    private String sanitizeNpcName(String name) {
+        if (name==null) return "";
+        try {
+            String noTags = net.runelite.client.util.Text.removeTags(name);
+            return noTags.replace('\u00A0',' ').trim();
+        } catch(Exception e){
+            return name.replace('\u00A0',' ').trim();
+        }
+    }
+
+    private boolean matchesNpc(KPWebhookPreset.NpcConfig cfg, NPC npc) {
+        if (cfg==null || npc==null) return false;
+        int id = npc.getId();
+        String n = sanitizeNpcName(npc.getName());
+        if (cfg.getNpcIds()!=null) {
+            for (Integer i : cfg.getNpcIds()) if (i!=null && i==id) return true;
+        }
+        if (n!=null && !n.isEmpty() && cfg.getNpcNames()!=null) {
+            String ln = n.toLowerCase(java.util.Locale.ROOT);
+            for (String s : cfg.getNpcNames()) if (ln.equals(s)) return true;
         }
         return false;
     }
 
-    private void executeHitsplatRule(KPWebhookPreset rule, int amount, boolean self) {
-        if (rule == null) return;
-        stopRule(rule.getId());
-        String cmds = rule.getCommands();
-        if (cmds == null || cmds.isBlank()) return;
-        Map<String,String> ctx = new HashMap<>();
-        ctx.put("player", client.getLocalPlayer()!=null?client.getLocalPlayer().getName():"Unknown");
-        ctx.put("stat", ""); ctx.put("current","" ); ctx.put("value","");
-        ctx.put("widgetGroup","" ); ctx.put("widgetChild","" );
-        ctx.put("time", Instant.now().toString());
-        ctx.put("otherPlayer","" ); ctx.put("otherCombat","" );
-        ctx.put("TARGET", getCurrentTargetName()); ctx.put("$TARGET", getCurrentTargetName());
-        if (self) { ctx.put("HITSPLAT_SELF", String.valueOf(amount)); ctx.put("HITSPLAT_TARGET", ""); }
-        else { ctx.put("HITSPLAT_SELF", ""); ctx.put("HITSPLAT_TARGET", String.valueOf(amount)); }
-        ctx.put("HITSPLAT", String.valueOf(amount));
-        try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch (Exception ignored) { ctx.put("WORLD", ""); }
-        ctx.put("STAT", ""); ctx.put("CURRENT_STAT", "");
-        for (Skill s : Skill.values()) {
-            try { int real = client.getRealSkillLevel(s); int boosted = client.getBoostedSkillLevel(s);
-                ctx.put("$"+s.name(), String.valueOf(real));
-                ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
-                ctx.put(s.name(), String.valueOf(real));
-                ctx.put("CURRENT_"+s.name(), String.valueOf(boosted)); } catch (Exception ignored) {}
+    /* ================= Webhook & Screenshot Helpers (restored) ================= */
+    private void sendWebhookMessage(String webhook, String message)
+    {
+        if (webhook == null || webhook.isBlank()) return;
+        executorService.execute(() -> {
+            try {
+                String json = gson.toJson(Map.of("content", message));
+                RequestBody body = RequestBody.create(JSON, json);
+                Request request = new Request.Builder().url(webhook).post(body).build();
+                try (Response response = okHttpClient.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        log.warn("Webhook failed: {}", response.code());
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Error sending webhook", e);
+            }
+        });
+    }
+
+    private void captureAndSendSimpleScreenshot(String webhook, String message)
+    {
+        if (webhook == null || webhook.isBlank()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastScreenshotRequestMs < SCREENSHOT_COOLDOWN_MS) return;
+        lastScreenshotRequestMs = now;
+        if (tryClientBufferedImage(webhook, message)) return;
+        if (isCanvasVisible()) {
+            if (tryRuneLiteScreenshot(webhook, message)) return;
+            if (tryRobotScreenshot(webhook, message)) return;
         }
-        List<PendingCommand> list = new ArrayList<>();
-        for (String rawLine : cmds.split("\r?\n")) {
-            String line = rawLine.trim(); if (line.isEmpty() || line.startsWith("#")) continue;
-            String upper = line.toUpperCase(Locale.ROOT);
-            if (upper.startsWith("SLEEP ")) { long ms=0; try { ms = Long.parseLong(line.substring(6).trim()); } catch (Exception ignored) {} PendingCommand pc=new PendingCommand(); pc.type=PendingType.SLEEP_DELAY; pc.sleepMs=Math.max(0,ms); list.add(pc);} else if (upper.equals("SLEEP")) {}
-            else if (upper.startsWith("TICK")) { int ticks=1; String[] parts=line.split("\\s+"); if (parts.length>1){ try { ticks=Integer.parseInt(parts[1]); } catch (Exception ignored) {} } PendingCommand pc=new PendingCommand(); pc.type=PendingType.TICK_DELAY; pc.ticks=Math.max(1,ticks); list.add(pc);} else { PendingCommand pc=new PendingCommand(); pc.type=PendingType.ACTION; pc.line=line; list.add(pc);} }
-        if (list.isEmpty()) return;
-        CommandSequence seq = new CommandSequence();
-        seq.rule = rule; seq.ctx = ctx; seq.commands = list; seq.index = 0; seq.tickDelayRemaining = 0; seq.sleepUntilMillis = 0;
-        activeSequences.add(seq);
+        clientThread.invokeLater(() -> SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, 0)));
+    }
+    private boolean tryRuneLiteScreenshot(String webhook, String message)
+    {
+        try {
+            Canvas canvas = client.getCanvas(); if (canvas == null) return false;
+            SwingUtilities.invokeAndWait(() -> { try { canvas.repaint(); Thread.sleep(40); } catch (Exception ignored) {} });
+            BufferedImage img = new BufferedImage(canvas.getWidth(), canvas.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = img.createGraphics();
+            try { canvas.paint(g); } finally { g.dispose(); }
+            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
+        } catch (Exception ignored) {}
+        return false;
+    }
+    private boolean tryClientBufferedImage(String webhook, String message)
+    {
+        try {
+            String[] names = {"getGameImage","getBufferedImage","getCanvasImage","getScreenshot","createScreenshot","getDrawImage"};
+            for (String n : names) {
+                try {
+                    java.lang.reflect.Method m = client.getClass().getMethod(n);
+                    if (BufferedImage.class.isAssignableFrom(m.getReturnType())) {
+                        Object o = m.invoke(client);
+                        if (o instanceof BufferedImage) {
+                            BufferedImage img = copyBuffered((BufferedImage) o);
+                            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            // Fallback scan generic methods
+            for (java.lang.reflect.Method m : client.getClass().getMethods()) {
+                try {
+                    if (m.getParameterCount()==0 && BufferedImage.class.isAssignableFrom(m.getReturnType())) {
+                        Object o = m.invoke(client);
+                        if (o instanceof BufferedImage) {
+                            BufferedImage img = copyBuffered((BufferedImage)o);
+                            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+    private boolean tryRobotScreenshot(String webhook, String message)
+    {
+        try {
+            Canvas canvas = client.getCanvas(); if (canvas == null) return false;
+            java.awt.Point p = canvas.getLocationOnScreen(); Dimension d = canvas.getSize();
+            if (d.width <=0 || d.height<=0) return false;
+            Thread.sleep(40);
+            Robot r = new Robot();
+            BufferedImage img = r.createScreenCapture(new Rectangle(p.x, p.y, d.width, d.height));
+            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return true; }
+        } catch (Exception ignored) {}
+        return false;
+    }
+    private void captureCanvasEDT(String webhook, String message, int attempt)
+    {
+        final int MAX=4;
+        try {
+            if (!SwingUtilities.isEventDispatchThread()) { SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, attempt)); return; }
+            Canvas canvas = client.getCanvas(); if (canvas==null) return;
+            int w = canvas.getWidth(), h = canvas.getHeight(); if (w<=0||h<=0){ scheduleRetry(webhook,message,attempt,MAX); return; }
+            BufferedImage img = new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = img.createGraphics();
+            try { canvas.paint(g); } finally { g.dispose(); }
+            if (isImageValid(img)) { sendImageToWebhook(img, webhook, message); return; }
+            if (attempt < MAX) scheduleRetry(webhook,message,attempt,MAX);
+        } catch (Exception e) { if (attempt < MAX) scheduleRetry(webhook,message,attempt,MAX); }
+    }
+    private void scheduleRetry(String webhook, String message, int attempt, int max)
+    { if (attempt >= max) return; executorService.schedule(() -> SwingUtilities.invokeLater(() -> captureCanvasEDT(webhook, message, attempt+1)), 60, TimeUnit.MILLISECONDS); }
+
+    private boolean isImageValid(BufferedImage img) { return img != null && !isMostlyBlack(img) && !isMostlyWhite(img); }
+    private boolean isMostlyBlack(BufferedImage img) {
+        if (img == null) return false;
+        try {
+            int w = img.getWidth(), h = img.getHeight();
+            long dark=0,total=0; int stepX=Math.max(1,w/50), stepY=Math.max(1,h/50);
+            for (int y=0;y<h;y+=stepY) for (int x=0;x<w;x+=stepX) { int rgb=img.getRGB(x,y); int r=(rgb>>16)&0xFF,g=(rgb>>8)&0xFF,b=rgb&0xFF; int lum=(r*30+g*59+b*11)/100; if (lum<5) dark++; total++; }
+            return total>0 && dark*100/total>95;
+        } catch (Exception e) { return false; }
+    }
+    private boolean isMostlyWhite(BufferedImage img) {
+        if (img == null) return false;
+        try {
+            int w = img.getWidth(), h = img.getHeight();
+            long bright=0,total=0; int stepX=Math.max(1,w/50), stepY=Math.max(1,h/50);
+            for (int y=0;y<h;y+=stepY) for (int x=0;x<w;x+=stepX) { int rgb=img.getRGB(x,y); int r=(rgb>>16)&0xFF,g=(rgb>>8)&0xFF,b=rgb&0xFF; int lum=(r*30+g*59+b*11)/100; if (lum>240) bright++; total++; }
+            return total>0 && bright*100/total>90;
+        } catch (Exception e) { return false; }
+    }
+    private BufferedImage copyBuffered(BufferedImage src) {
+        if (src == null) return null; try { BufferedImage copy = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB); Graphics2D g=copy.createGraphics(); g.drawImage(src,0,0,null); g.dispose(); return copy; } catch (Exception e) { return src; }
+    }
+    private void sendImageToWebhook(BufferedImage img, String webhook, String message) {
+        if (img == null || webhook == null || webhook.isBlank()) return;
+        executorService.execute(() -> {
+            try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                ImageIO.write(img, "png", baos);
+                byte[] png = baos.toByteArray();
+                MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM);
+                if (message != null && !message.isBlank()) mb.addFormDataPart("content", message);
+                mb.addFormDataPart("file", "screenshot.png", RequestBody.create(PNG, png));
+                Request request = new Request.Builder().url(webhook).post(mb.build()).build();
+                try (Response response = okHttpClient.newCall(request).execute()) {
+                    if (!response.isSuccessful()) log.warn("Webhook image failed: {}", response.code());
+                }
+            } catch (Exception e) { log.warn("Failed to send image webhook", e); }
+        });
     }
 }
