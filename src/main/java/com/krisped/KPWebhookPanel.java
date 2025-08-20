@@ -6,8 +6,12 @@ import net.runelite.client.ui.FontManager;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -23,9 +27,18 @@ public class KPWebhookPanel extends PluginPanel {
 
     private static final int ROW_HEIGHT = 28;
     private static final String UNDEFINED_KEY = "__undefined__";
+    private static final String DND_PREFIX = "PRESET_ID:"; // drag identifier
+    // Drag state
+    private final DragState dragState = new DragState();
+    private DragGlassPane dragGlassPane;
+    private static class DragState { boolean active; KPWebhookPreset preset; Point start; Point current; CategorySection hover; BufferedImage ghostImg; Point ghostOffset=new Point(0,0);}
+    private void ensureGlassPane(){ Window w = SwingUtilities.getWindowAncestor(this); if(w instanceof RootPaneContainer){ RootPaneContainer rpc=(RootPaneContainer)w; if(!(rpc.getGlassPane() instanceof DragGlassPane)){ DragGlassPane gp=new DragGlassPane(); gp.setOpaque(false); rpc.setGlassPane(gp); gp.setVisible(true); } dragGlassPane=(DragGlassPane) rpc.getGlassPane(); } }
+    private class DragGlassPane extends JComponent { String text; Point loc; BufferedImage img; @Override protected void paintComponent(Graphics g){ if((text==null && img==null)||loc==null) return; Graphics2D g2=(Graphics2D)g.create(); g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON); int x=loc.x+12; int y=loc.y+12; if(img!=null){ g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,0.85f)); g2.drawImage(img,x+dragState.ghostOffset.x,y+dragState.ghostOffset.y,null); g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1f)); g2.setColor(new Color(255,215,80,180)); g2.drawRect(x+dragState.ghostOffset.x,y+dragState.ghostOffset.y,img.getWidth()-1,img.getHeight()-1); } else { Font f=FontManager.getRunescapeBoldFont().deriveFont(14f); g2.setFont(f); FontMetrics fm=g2.getFontMetrics(); int w=fm.stringWidth(text)+14; int h=fm.getHeight()+8; g2.setColor(new Color(0,0,0,170)); g2.fillRoundRect(x,y,w,h,10,10); g2.setColor(new Color(255,215,80)); g2.drawRoundRect(x,y,w,h,10,10); g2.setColor(Color.WHITE); g2.drawString(text, x+7, y+ (h-fm.getDescent()-4)); } g2.dispose(); } }
 
     public KPWebhookPanel(KPWebhookPlugin plugin){
         this.plugin=plugin;
+        // Warm up RuneScape fonts up-front so preferred sizes are stable (avoids 2-5s relayout flicker)
+        try { FontManager.getRunescapeFont(); FontManager.getRunescapeBoldFont(); } catch (Exception ignored) {}
         setLayout(new BorderLayout());
         listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
         listContainer.setOpaque(false);
@@ -34,6 +47,7 @@ public class KPWebhookPanel extends PluginPanel {
         scroll.setBorder(null); scroll.setViewportBorder(null); scroll.getViewport().setOpaque(false); scroll.setOpaque(false);
         buildUI();
         refreshTable();
+        SwingUtilities.invokeLater(this::ensureGlassPane); // prep glass pane early
     }
     private void buildUI(){
         tabs = new JTabbedPane();
@@ -121,6 +135,7 @@ public class KPWebhookPanel extends PluginPanel {
         row.setAlignmentX(Component.LEFT_ALIGNMENT);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, ROW_HEIGHT+4));
         row.setMinimumSize(new Dimension(0, ROW_HEIGHT+4));
+        row.setPreferredSize(new Dimension(Integer.MAX_VALUE, ROW_HEIGHT+4));
         Color activeGreen = new Color(40,160,60);
         Color inactiveBar = new Color(55,55,55);
         Color base = UIManager.getColor("Panel.background"); if(base==null) base = new Color(45,45,45);
@@ -160,6 +175,15 @@ public class KPWebhookPanel extends PluginPanel {
         popup.add(editItem); popup.add(runItem); popup.add(duplicateItem); popup.addSeparator(); popup.add(deleteItem);
         MouseAdapter pop = new MouseAdapter(){ private void showPop(MouseEvent e){ if(e.isPopupTrigger()) popup.show(e.getComponent(), e.getX(), e.getY()); } @Override public void mousePressed(MouseEvent e){showPop(e);} @Override public void mouseReleased(MouseEvent e){showPop(e);} };
         for (JComponent c : new JComponent[]{row, center, titleLbl, activeBox, indicator}) c.addMouseListener(pop);
+        // Manual drag listeners (visual ghost)
+        MouseAdapter dragAdapter = new MouseAdapter(){
+            @Override public void mousePressed(MouseEvent e){ dragState.start=e.getPoint(); dragState.current=null; dragState.active=false; dragState.preset=preset; dragState.ghostImg=captureRowImage(row); dragState.ghostOffset = new Point(-e.getX(), -e.getY()); }
+            @Override public void mouseDragged(MouseEvent e){ if(dragState.preset!=preset) return; Point pScreen = e.getLocationOnScreen(); if(dragState.start!=null && !dragState.active){ Point now=e.getPoint(); if(now.distance(dragState.start)>5){ dragState.active=true; ensureGlassPane(); if(dragGlassPane!=null){ dragGlassPane.text=preset.getTitle()!=null? preset.getTitle():"(no title)"; dragGlassPane.img=dragState.ghostImg; } } }
+                if(dragState.active){ dragState.current=pScreen; updateHoverCategory(pScreen); updateGhost(); }
+            }
+            @Override public void mouseReleased(MouseEvent e){ if(dragState.active){ commitDrag(); } resetDrag(); }
+        };
+        for(JComponent c: new JComponent[]{row, center, titleLbl, indicator}){ c.addMouseListener(dragAdapter); c.addMouseMotionListener(dragAdapter);}
         return row;
     }
 
@@ -183,11 +207,19 @@ public class KPWebhookPanel extends PluginPanel {
             headerRow.add(headerBtn, BorderLayout.CENTER);
             add(headerRow);
             content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS)); content.setOpaque(false); content.setAlignmentX(Component.LEFT_ALIGNMENT); add(content); content.setVisible(expanded);
+            // Drop target for category reassignment
+            setTransferHandler(new TransferHandler(){
+                private Color orig = headerBtn.getForeground();
+                @Override public boolean canImport(TransferSupport support){ boolean ok=false; try { if(support.isDataFlavorSupported(DataFlavor.stringFlavor)){ String s=(String)support.getTransferable().getTransferData(DataFlavor.stringFlavor); ok = s!=null && s.startsWith(DND_PREFIX); } } catch(Exception ignored){} headerBtn.setForeground(ok? new Color(255,215,80): orig); return ok; }
+                @Override public boolean importData(TransferSupport support){ headerBtn.setForeground(orig); if(!canImport(support)) return false; try { String s=(String)support.getTransferable().getTransferData(DataFlavor.stringFlavor); int id=Integer.parseInt(s.substring(DND_PREFIX.length())); updatePresetCategory(id, categoryKey); return true; } catch(Exception e){ return false; } }
+                @Override protected void exportDone(JComponent source, Transferable data, int action){ headerBtn.setForeground(orig); }
+            });
         }
         void setPresets(List<KPWebhookPreset> list){ content.removeAll(); for (int i=0;i<list.size();i++){ content.add(buildRow(list.get(i))); if (i<list.size()-1) content.add(Box.createVerticalStrut(2)); } }
         private void toggle(){ expanded=!expanded; headerBtn.setIcon(expanded?CHEVRON_DOWN:CHEVRON_RIGHT); content.setVisible(expanded); revalidate(); repaint(); }
         @Override public Dimension getMaximumSize(){ return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
         @Override public Dimension getPreferredSize(){ Dimension d=super.getPreferredSize(); if(!expanded) return new Dimension(d.width, headerBtn.getPreferredSize().height+4); return d; }
+        String getCategoryKey(){ return categoryKey; }
     }
     private static class ChevronIcon implements Icon { private final boolean down; private static final int SZ=11; ChevronIcon(boolean d){down=d;} @Override public void paintIcon(Component c, Graphics g, int x, int y){ Graphics2D g2=(Graphics2D)g.create(); g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON); g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g2.setColor(new Color(205,205,205)); int w=SZ,h=SZ; if(down){int mx=x+w/2; int top=y+3; int left=x+2; int right=x+w-2; int bottom=y+h-3; g2.drawLine(left,top,mx,bottom); g2.drawLine(mx,bottom,right,top);} else {int left=x+2; int topY=y+2; int right=x+w-2; int midY=y+h/2; g2.drawLine(left,midY, right, topY); g2.drawLine(right, topY, right, topY); g2.drawLine(right, topY, left, topY);} g2.dispose(); } @Override public int getIconWidth(){return SZ;} @Override public int getIconHeight(){return SZ;} }
 
@@ -209,4 +241,18 @@ public class KPWebhookPanel extends PluginPanel {
         for(JComponent c: comps) c.setToolTipText(body.toString());
     }
     private String escapeHtml(String s){ return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
+    private void updatePresetCategory(int id, String targetKey){
+        List<KPWebhookPreset> list = plugin.getRules();
+        for(KPWebhookPreset p: list){ if(p.getId()==id){ String newCat = targetKey.equals(UNDEFINED_KEY)? null : targetKey; if(Objects.equals(p.getCategory(), newCat)) return; p.setCategory(newCat); plugin.addOrUpdate(p); refreshTable(); return; } }
+    }
+    private void movePresetCategory(KPWebhookPreset preset, String category){ if(preset==null) return; preset.setCategory(category); plugin.addOrUpdate(preset); refreshTable(); }
+    private void updateHoverCategory(Point screen){ CategorySection newHover=null; if(screen!=null){ for(Component c: listContainer.getComponents()){ if(c instanceof CategorySection){ Rectangle b = c.getBounds(); Point topLeft = new Point(0,0); SwingUtilities.convertPointToScreen(topLeft, c); Rectangle sb=new Rectangle(topLeft.x, topLeft.y, b.width, b.height); if(sb.contains(screen)){ newHover=(CategorySection)c; break; } } } }
+        if(newHover!=dragState.hover){ if(dragState.hover!=null) setHeaderHighlight(dragState.hover,false); dragState.hover=newHover; if(dragState.hover!=null) setHeaderHighlight(dragState.hover,true); }
+    }
+    private void setHeaderHighlight(CategorySection sec, boolean on){ if(sec==null) return; for(Component ch: sec.getComponents()){ if(ch instanceof JPanel){ for(Component inner: ((JPanel)ch).getComponents()){ if(inner instanceof JButton){ JButton b=(JButton)inner; b.setForeground(on? new Color(255,215,80): UIManager.getColor("Label.foreground")); } } } } sec.repaint(); }
+    private void updateGhost(){ if(dragGlassPane==null) return; if(!dragState.active){ dragGlassPane.text=null; dragGlassPane.loc=null; dragGlassPane.img=null; dragGlassPane.repaint(); return;} // convert screen to glass pane coords
+        Point gpPoint = new Point(dragState.current); SwingUtilities.convertPointFromScreen(gpPoint, dragGlassPane); dragGlassPane.loc=gpPoint; dragGlassPane.repaint(); }
+    private void commitDrag(){ if(dragState.preset!=null && dragState.hover!=null){ String key = dragState.hover.getCategoryKey(); String target = key.equals(UNDEFINED_KEY)? null: key; movePresetCategory(dragState.preset, target); } }
+    private void resetDrag(){ if(dragState.hover!=null) setHeaderHighlight(dragState.hover,false); dragState.active=false; dragState.preset=null; dragState.start=null; dragState.current=null; dragState.ghostImg=null; if(dragGlassPane!=null){ dragGlassPane.text=null; dragGlassPane.loc=null; dragGlassPane.img=null; dragGlassPane.repaint(); } }
+    private BufferedImage captureRowImage(JComponent comp){ int w=comp.getWidth(); int h=comp.getHeight(); if(w<=0||h<=0) return null; BufferedImage img=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB); Graphics2D g2=img.createGraphics(); comp.paint(g2); g2.dispose(); return img; }
 }

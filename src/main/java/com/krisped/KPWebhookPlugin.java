@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP.",
+        description = "Triggers: MANUAL, STAT, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP, TOGGLEPRESET, TOGGLEGROUP.",
         tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile"}
 )
 public class KPWebhookPlugin extends Plugin {
@@ -134,6 +134,13 @@ public class KPWebhookPlugin extends Plugin {
     // Stop rule cleanup
     private void stopRule(int ruleId){ cancelSequencesForRule(ruleId); removeOverheadsForRule(ruleId,true); removePersistentOverheadsForRule(ruleId); try{highlightManager.removeAllByRule(ruleId);}catch(Exception ignored){} overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); try { overlayTextManager.removeByRule(ruleId);} catch(Exception ignored){} try{ if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(ruleId);}catch(Exception ignored){} }
 
+    // Soft cancel invoked when forceCancelOnChange conditions revert; keeps rule active for future triggers
+    private void softCancelOnChange(KPWebhookPreset r){
+        if(r==null) return;
+        // Perform same cleanup as stopRule but do not toggle active flag
+        stopRule(r.getId());
+    }
+
     // EXECUTION
     private void executeRule(KPWebhookPreset rule, Skill skill, int value, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg){ executeRule(rule,skill,value,statCfg,widgetCfg,null,null); }
     private void executeRule(KPWebhookPreset rule, Skill skill, int value, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg, Player other){ executeRule(rule,skill,value,statCfg,widgetCfg,other,null); }
@@ -196,7 +203,20 @@ public class KPWebhookPlugin extends Plugin {
     public void manualSend(int id){ KPWebhookPreset r=find(id); if(r!=null){ if(debugWindow!=null && debugWindow.isVisible()){ try{ debugWindow.logManual(r.getId(), r.getTitle()); }catch(Exception ignored){} } executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig()); } }
 
     // COMMAND PROCESSOR
-    private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx){ if(line==null|| line.isBlank()) return; String raw=line.trim(); String up=raw.toUpperCase(Locale.ROOT); try { if(up.equals("STOP")|| up.equals("STOP_RULE")){ if(rule!=null) stopRule(rule.getId()); return;} if(up.startsWith("STOP ")|| up.startsWith("STOP_RULE ")){ String a=raw.substring(raw.indexOf(' ')+1).trim(); if(a.equalsIgnoreCase("ALL")){ for(KPWebhookPreset r: rules) stopRule(r.getId()); } else { try{ int rid=Integer.parseInt(a); stopRule(rid);}catch(Exception ignored){} } return;} if(up.startsWith("NOTIFY ")){ notifyRuneLite(expand(raw.substring(7).trim(), ctx)); return;} if(up.startsWith("CUSTOM_MESSAGE ")){ handleCustomMessage(raw.substring(14).trim(), ctx); return;} if(up.startsWith("WEBHOOK")){ String msg=raw.length()>7? raw.substring(7).trim():""; String webhook = (rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) sendWebhookMessage(webhook, expand(msg, ctx)); return;} if(up.startsWith("SCREENSHOT")){ String msg=raw.length()>10? raw.substring(10).trim():""; String webhook=(rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) captureAndSendSimpleScreenshot(webhook, expand(msg, ctx)); return;} if(up.startsWith("HIGHLIGHT_")){ if(highlightCommandHandler!=null && rule!=null) highlightCommandHandler.handle(raw, rule); return;} if(up.startsWith("OVERLAY_TEXT")){ if(overlayTextCommandHandler!=null && rule!=null) overlayTextCommandHandler.handle(raw, rule); return;} if(up.startsWith("INFOBOX")){ if(infoboxCommandHandler!=null && rule!=null) infoboxCommandHandler.handle(raw, rule, ctx); return;} if(up.startsWith("TEXT_OVER")|| up.startsWith("TEXT_UNDER")|| up.startsWith("TEXT_CENTER")){ handleTargetedTextCommand(rule, raw, ctx); return;} if(up.startsWith("IMG_OVER")|| up.startsWith("IMG_UNDER")|| up.startsWith("IMG_CENTER")){ handleImageCommand(rule, raw, ctx); return;} } catch(Exception e){ log.debug("processActionLine fail: {} => {}", raw, e.toString()); } }
+    private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx){ if(line==null|| line.isBlank()) return; String raw=line.trim(); String up=raw.toUpperCase(Locale.ROOT); try {
+        // TOGGLEPRESET <name> <1|0>
+        if(up.startsWith("TOGGLEPRESET ")){
+            String rest = raw.substring("TOGGLEPRESET".length()).trim();
+            int space = rest.lastIndexOf(' ');
+            if(space>0){ String namePart = rest.substring(0, space).trim(); String flagPart = rest.substring(space+1).trim(); boolean on = flagPart.equals("1") || flagPart.equalsIgnoreCase("ON"); togglePresetByTitle(namePart, on); }
+            return; }
+        // TOGGLEGROUP <category> <1|0>
+        if(up.startsWith("TOGGLEGROUP ")){
+            String rest = raw.substring("TOGGLEGROUP".length()).trim();
+            int space = rest.lastIndexOf(' ');
+            if(space>0){ String catPart = rest.substring(0, space).trim(); String flagPart = rest.substring(space+1).trim(); boolean on = flagPart.equals("1") || flagPart.equalsIgnoreCase("ON"); toggleGroup(catPart, on); }
+            return; }
+         if(up.equals("STOP")|| up.equals("STOP_RULE")){ if(rule!=null) stopRule(rule.getId()); return;} if(up.startsWith("STOP ")|| up.startsWith("STOP_RULE ")){ String a=raw.substring(raw.indexOf(' ')+1).trim(); if(a.equalsIgnoreCase("ALL")){ for(KPWebhookPreset r: rules) stopRule(r.getId()); } else { try{ int rid=Integer.parseInt(a); stopRule(rid);}catch(Exception ignored){} } return;} if(up.startsWith("NOTIFY ")){ notifyRuneLite(expand(raw.substring(7).trim(), ctx)); return;} if(up.startsWith("CUSTOM_MESSAGE ")){ handleCustomMessage(raw.substring(14).trim(), ctx); return;} if(up.startsWith("WEBHOOK")){ String msg=raw.length()>7? raw.substring(7).trim():""; String webhook = (rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) sendWebhookMessage(webhook, expand(msg, ctx)); return;} if(up.startsWith("SCREENSHOT")){ String msg=raw.length()>10? raw.substring(10).trim():""; String webhook=(rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) captureAndSendSimpleScreenshot(webhook, expand(msg, ctx)); return;} if(up.startsWith("HIGHLIGHT_")){ if(highlightCommandHandler!=null && rule!=null) highlightCommandHandler.handle(raw, rule); return;} if(up.startsWith("OVERLAY_TEXT")){ if(overlayTextCommandHandler!=null && rule!=null) overlayTextCommandHandler.handle(raw, rule); return;} if(up.startsWith("INFOBOX")){ if(infoboxCommandHandler!=null && rule!=null) infoboxCommandHandler.handle(raw, rule, ctx); return;} if(up.startsWith("TEXT_OVER")|| up.startsWith("TEXT_UNDER")|| up.startsWith("TEXT_CENTER")){ handleTargetedTextCommand(rule, raw, ctx); return;} if(up.startsWith("IMG_OVER")|| up.startsWith("IMG_UNDER")|| up.startsWith("IMG_CENTER")){ handleImageCommand(rule, raw, ctx); return;} } catch(Exception e){ log.debug("processActionLine fail: {} => {}", raw, e.toString()); } }
 
     private void handleCustomMessage(String remainder, Map<String,String> ctx){ if(remainder==null||remainder.isBlank()) return; String[] parts=remainder.split("\\s+",2); if(parts.length<2) return; ChatMessageType type=resolveChatMessageType(parts[0]); String msg=expand(parts[1], ctx); try{ client.addChatMessage(type,"", msg,null);}catch(Exception ignored){} }
     private ChatMessageType resolveChatMessageType(String token){ if(token==null) return ChatMessageType.GAMEMESSAGE; String up=token.trim().toUpperCase(Locale.ROOT);
@@ -368,7 +388,9 @@ public class KPWebhookPlugin extends Plugin {
         savePreset(r);
         try { if(panel!=null) panel.refreshTable(); } catch(Exception ignored){}
     }
-    // Soft cancel: clear visuals & sequences but keep preset active
-    private void softCancelOnChange(KPWebhookPreset r){ if(r==null) return; stopRule(r.getId()); /* stopRule does not flip active flag */ }
+    private void setPresetActive(KPWebhookPreset r, boolean active){ if(r==null) return; if(r.isActive()==active) return; r.setActive(active); if(!active) stopRule(r.getId()); savePreset(r); try{ if(panel!=null) panel.refreshTable(); }catch(Exception ignored){} }
+    private String normalizeNameKey(String s){ if(s==null) return ""; return s.trim().toLowerCase(Locale.ROOT).replaceAll("[ _]+","_"); }
+    private void togglePresetByTitle(String title, boolean on){ if(title==null||title.isBlank()) return; String key = normalizeNameKey(title); KPWebhookPreset match=null; for(KPWebhookPreset r: rules){ String rt=r.getTitle(); if(rt==null) continue; if(normalizeNameKey(rt).equals(key)){ match=r; break; } } setPresetActive(match, on); }
+    private void toggleGroup(String category, boolean on){ if(category==null||category.isBlank()) return; String key = normalizeNameKey(category); for(KPWebhookPreset r: rules){ String cat=r.getCategory(); if(cat!=null && normalizeNameKey(cat).equals(key)){ setPresetActive(r,on); } } }
     private void ensureUniqueIds(){ Set<Integer> seen=new HashSet<>(); for(KPWebhookPreset r: rules){ if(r.getId()<0 || seen.contains(r.getId())){ r.setId(nextId++); savePreset(r); } seen.add(r.getId()); } }
 }

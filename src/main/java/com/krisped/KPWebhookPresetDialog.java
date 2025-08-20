@@ -130,6 +130,8 @@ public class KPWebhookPresetDialog extends JDialog
             "#  TEXT_OVER <text>         - Text above entity\n" +
             "#  TEXT_UNDER <text>        - Text under feet\n" +
             "#  TICK [n]                 - Wait n game ticks (default 1)\n" +
+            "#  TOGGLEPRESET <title> <1|0> - Activate/deactivate preset by exact title (1=on)\n" +
+            "#  TOGGLEGROUP <category> <1|0> - Activate/deactivate all presets in category (1=on)\n" +
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
             "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id>\n" +
             "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
@@ -493,6 +495,8 @@ public class KPWebhookPresetDialog extends JDialog
         cmdMap.put("TEXT_OVER [target] <text>", "Text above");
         cmdMap.put("TEXT_UNDER [target] <text>", "Text under-feet");
         cmdMap.put("TICK [n]", "Delay n game ticks (default 1)");
+        cmdMap.put("TOGGLEPRESET <title> <1|0>", "Activate (1) or deactivate (0) preset by exact title");
+        cmdMap.put("TOGGLEGROUP <category> <1|0>", "Activate/deactivate all presets in category");
         cmdMap.put("WEBHOOK <text>", "Send plain content to webhook");
         java.util.List<String> cmdKeys = new java.util.ArrayList<>(cmdMap.keySet());
         java.util.Collections.sort(cmdKeys, String.CASE_INSENSITIVE_ORDER);
