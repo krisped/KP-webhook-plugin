@@ -9,6 +9,7 @@ import net.runelite.api.*;
 import net.runelite.api.events.*;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.coords.LocalPoint; // added for projectile origin proximity
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -45,7 +46,7 @@ import java.util.regex.Pattern;
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP, TOGGLEPRESET, TOGGLEGROUP.",
+        description = "Triggers: MANUAL, STAT, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, MARK_TILE, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP, TOGGLEPRESET, TOGGLEGROUP.",
         tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile"}
 )
 public class KPWebhookPlugin extends Plugin {
@@ -82,6 +83,9 @@ public class KPWebhookPlugin extends Plugin {
     // Overhead images
     @Data public static class ActiveOverheadImage { BufferedImage image; int itemOrSpriteId; boolean sprite; String position; int remainingTicks; boolean persistent; boolean blink; int blinkCounter; int blinkInterval=2; boolean visiblePhase=true; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
     private final List<ActiveOverheadImage> overheadImages = new ArrayList<>(); public List<ActiveOverheadImage> getOverheadImages(){ return overheadImages; }
+    // MARK_TILE storage
+    @Data public static class MarkedTile { WorldPoint worldPoint; Color color; String text; int width; int ruleId; }
+    private final List<MarkedTile> markedTiles = new ArrayList<>(); public List<MarkedTile> getMarkedTiles(){ return markedTiles; }
 
     // Sequencing
     private enum PendingType { ACTION, TICK_DELAY, SLEEP_DELAY }
@@ -97,7 +101,7 @@ public class KPWebhookPlugin extends Plugin {
     @Override protected void startUp(){ panel = new KPWebhookPanel(this); navButton = NavigationButton.builder().tooltip("KP Webhook").icon(ImageUtil.loadImageResource(KPWebhookPlugin.class, "webhook.png")).priority(1).panel(panel).build(); clientToolbar.addNavigation(navButton); overlayManager.add(highlightOverlay); overlayManager.add(minimapHighlightOverlay); overlayManager.add(overlayTextOverlay); captureInitialRealLevels(); storage = new KPWebhookStorage(configManager, gson); rules.clear(); rules.addAll(storage.loadAll()); // establish nextId
         nextId = 0; for (KPWebhookPreset r: rules) if (r.getId()>=nextId) nextId=r.getId()+1; // repair any invalid / duplicate ids
         ensureUniqueIds(); panel.refreshTable(); }
-    @Override protected void shutDown(){ overlayManager.remove(highlightOverlay); overlayManager.remove(minimapHighlightOverlay); overlayManager.remove(overlayTextOverlay); clientToolbar.removeNavigation(navButton); saveAllPresets(); rules.clear(); highlightManager.clear(); overheadTexts.clear(); overheadImages.clear(); if (infoboxCommandHandler!=null) infoboxCommandHandler.clearAll(); if (overlayTextManager!=null) overlayTextManager.clear(); if (debugWindow!=null){ try{debugWindow.dispose();}catch(Exception ignored){} debugWindow=null;} if (presetDebugWindow!=null){ try{presetDebugWindow.dispose();}catch(Exception ignored){} presetDebugWindow=null;} }
+    @Override protected void shutDown(){ overlayManager.remove(highlightOverlay); overlayManager.remove(minimapHighlightOverlay); overlayManager.remove(overlayTextOverlay); clientToolbar.removeNavigation(navButton); saveAllPresets(); rules.clear(); highlightManager.clear(); overheadTexts.clear(); overheadImages.clear(); markedTiles.clear(); if (infoboxCommandHandler!=null) infoboxCommandHandler.clearAll(); if (overlayTextManager!=null) overlayTextManager.clear(); if (debugWindow!=null){ try{debugWindow.dispose();}catch(Exception ignored){} debugWindow=null;} if (presetDebugWindow!=null){ try{presetDebugWindow.dispose();}catch(Exception ignored){} presetDebugWindow=null;} }
 
     private void captureInitialRealLevels(){ for (Skill s: Skill.values()){ try { lastRealLevel.put(s, client.getRealSkillLevel(s)); } catch(Exception ignored){} } }
 
@@ -132,7 +136,8 @@ public class KPWebhookPlugin extends Plugin {
     private void saveAllPresets(){ if(storage!=null) for(KPWebhookPreset p: rules) storage.save(p,null); }
 
     // Stop rule cleanup
-    private void stopRule(int ruleId){ cancelSequencesForRule(ruleId); removeOverheadsForRule(ruleId,true); removePersistentOverheadsForRule(ruleId); try{highlightManager.removeAllByRule(ruleId);}catch(Exception ignored){} overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); try { overlayTextManager.removeByRule(ruleId);} catch(Exception ignored){} try{ if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(ruleId);}catch(Exception ignored){} }
+    private void stopRule(int ruleId){ cancelSequencesForRule(ruleId); removeOverheadsForRule(ruleId,true); removePersistentOverheadsForRule(ruleId); try{highlightManager.removeAllByRule(ruleId);}catch(Exception ignored){} overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); try { overlayTextManager.removeByRule(ruleId);} catch(Exception ignored){} try{ if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(ruleId);}catch(Exception ignored){} // remove marked tiles
+        markedTiles.removeIf(mt-> mt!=null && mt.ruleId==ruleId); }
 
     // Soft cancel invoked when forceCancelOnChange conditions revert; keeps rule active for future triggers
     private void softCancelOnChange(KPWebhookPreset r){
@@ -204,6 +209,11 @@ public class KPWebhookPlugin extends Plugin {
 
     // COMMAND PROCESSOR
     private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx){ if(line==null|| line.isBlank()) return; String raw=line.trim(); String up=raw.toUpperCase(Locale.ROOT); try {
+        // MARK_TILE <colorOrHex> <x,y[,plane]> [label...]
+        if(up.startsWith("MARK_TILE")){
+            handleMarkTile(rule, raw.substring(9).trim(), ctx);
+            return;
+        }
         // TOGGLEPRESET <name> <1|0>
         if(up.startsWith("TOGGLEPRESET ")){
             String rest = raw.substring("TOGGLEPRESET".length()).trim();
@@ -393,4 +403,32 @@ public class KPWebhookPlugin extends Plugin {
     private void togglePresetByTitle(String title, boolean on){ if(title==null||title.isBlank()) return; String key = normalizeNameKey(title); KPWebhookPreset match=null; for(KPWebhookPreset r: rules){ String rt=r.getTitle(); if(rt==null) continue; if(normalizeNameKey(rt).equals(key)){ match=r; break; } } setPresetActive(match, on); }
     private void toggleGroup(String category, boolean on){ if(category==null||category.isBlank()) return; String key = normalizeNameKey(category); for(KPWebhookPreset r: rules){ String cat=r.getCategory(); if(cat!=null && normalizeNameKey(cat).equals(key)){ setPresetActive(r,on); } } }
     private void ensureUniqueIds(){ Set<Integer> seen=new HashSet<>(); for(KPWebhookPreset r: rules){ if(r.getId()<0 || seen.contains(r.getId())){ r.setId(nextId++); savePreset(r); } seen.add(r.getId()); } }
+    private void handleMarkTile(KPWebhookPreset rule, String args, Map<String,String> ctx){
+        if(args==null||args.isBlank()) return; // Expect: <colorOrHex> <x,y[,plane]> [label...]
+        String[] parts=args.split("\\s+",3); if(parts.length<2) return; String colorPart=parts[0].trim(); String coordPart=parts[1].trim(); String labelPart= parts.length>=3? parts[2].trim():null;
+        // Expand context in label
+        if(labelPart!=null && !labelPart.isBlank() && ctx!=null && !ctx.isEmpty()){
+            for(Map.Entry<String,String> e: ctx.entrySet()){ String k=e.getKey(); String v=e.getValue()==null?"":e.getValue(); labelPart=labelPart.replace("${"+k+"}", v).replace("$"+k, v).replace("{{"+k+"}}", v); }
+        }
+        Color color=parseColorFlexible(colorPart);
+        // Parse coords
+        String[] xyz=coordPart.split(","); if(xyz.length<2) return; int x,y,plane; try{ x=Integer.parseInt(xyz[0]); y=Integer.parseInt(xyz[1]); plane = (xyz.length>=3)? Integer.parseInt(xyz[2]): client.getPlane(); }catch(Exception ex){ return; }
+        WorldPoint wp = new WorldPoint(x,y,plane);
+        int width=2; // default border width
+        int ruleId = rule!=null? rule.getId(): -1;
+        // Upsert existing tile for rule at same location
+        for(MarkedTile mt: markedTiles){ if(mt!=null && mt.getWorldPoint()!=null && mt.getWorldPoint().equals(wp) && mt.getRuleId()==ruleId){ mt.setColor(color); mt.setText(labelPart); mt.setWidth(width); return; } }
+        MarkedTile mt=new MarkedTile(); mt.setWorldPoint(wp); mt.setColor(color); mt.setText(labelPart); mt.setWidth(width); mt.setRuleId(ruleId); markedTiles.add(mt);
+    }
+    private Color parseColorFlexible(String token){ if(token==null||token.isBlank()) return Color.WHITE; String t=token.trim(); // Allow context expansion tokens already done earlier for label only
+        // Named colors
+        switch(t.toUpperCase(Locale.ROOT)){
+            case "RED": return Color.RED; case "GREEN": return Color.GREEN; case "BLUE": return Color.BLUE; case "YELLOW": return Color.YELLOW; case "CYAN": return Color.CYAN; case "MAGENTA": case "PURPLE": return new Color(128,0,128); case "ORANGE": return Color.ORANGE; case "WHITE": return Color.WHITE; case "BLACK": return Color.BLACK; case "PINK": return new Color(255,105,180); }
+        // Hex variants (#RRGGBB or RRGGBB or with alpha)
+        String h=t.startsWith("#")? t.substring(1): t; if(h.matches("(?i)[0-9A-F]{6}")){
+            try { int r=Integer.parseInt(h.substring(0,2),16); int g=Integer.parseInt(h.substring(2,4),16); int b=Integer.parseInt(h.substring(4,6),16); return new Color(r,g,b); }catch(Exception ignored){}
+        } else if(h.matches("(?i)[0-9A-F]{8}")){
+            try { int a=Integer.parseInt(h.substring(0,2),16); int r=Integer.parseInt(h.substring(2,4),16); int g=Integer.parseInt(h.substring(4,6),16); int b=Integer.parseInt(h.substring(6,8),16); return new Color(r,g,b,a); }catch(Exception ignored){}
+        }
+        return Color.WHITE; }
 }

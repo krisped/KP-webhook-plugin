@@ -153,6 +153,43 @@ public class HighlightOverlay extends Overlay {
                 }
             }
         }
+
+        // Render MARK_TILE tiles
+        java.util.List<KPWebhookPlugin.MarkedTile> tiles = plugin.getMarkedTiles();
+        if(tiles!=null && !tiles.isEmpty()){
+            Font oldFont = graphics.getFont();
+            Font tileFont = oldFont.deriveFont(Font.BOLD, 14f);
+            graphics.setFont(tileFont);
+            for(KPWebhookPlugin.MarkedTile mt : tiles){
+                if(mt==null || mt.getWorldPoint()==null) continue;
+                net.runelite.api.coords.WorldPoint wp = mt.getWorldPoint();
+                if(wp.getPlane() != client.getPlane()) continue;
+                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                if(lp==null) continue;
+                Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                if(poly==null) continue;
+                // Border
+                graphics.setColor(mt.getColor()!=null? mt.getColor(): Color.RED);
+                graphics.setStroke(new BasicStroke(Math.max(1f, mt.getWidth())));
+                graphics.draw(poly);
+                // Optional text centered inside
+                String txt = mt.getText();
+                if(txt!=null && !txt.isBlank()){
+                    Rectangle b = poly.getBounds();
+                    FontMetrics fm = graphics.getFontMetrics();
+                    int tw = fm.stringWidth(txt);
+                    int th = fm.getAscent();
+                    int tx = b.x + (b.width - tw)/2;
+                    int ty = b.y + (b.height + th)/2 - 2;
+                    // Outline text for readability
+                    graphics.setColor(Color.BLACK);
+                    for(int dx=-1; dx<=1; dx++) for(int dy=-1; dy<=1; dy++) if(dx!=0 || dy!=0) graphics.drawString(txt, tx+dx, ty+dy);
+                    graphics.setColor(mt.getColor()!=null? mt.getColor(): Color.WHITE);
+                    graphics.drawString(txt, tx, ty);
+                }
+            }
+            graphics.setFont(oldFont);
+        }
         return null;
     }
 
