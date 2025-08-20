@@ -14,7 +14,7 @@ public class KPWebhookPreset
     {
         MANUAL,
         STAT,
-        WIDGET,
+        WIDGET_SPAWN,
         PLAYER_SPAWN,
         PLAYER_DESPAWN,
         NPC_SPAWN,
@@ -109,10 +109,10 @@ public class KPWebhookPreset
     @AllArgsConstructor
     @Builder
     public static class HitsplatConfig {
-        public enum Mode { GREATER, GREATER_EQUAL, EQUAL, LESS_EQUAL, LESS }
+        public enum Mode { GREATER, GREATER_EQUAL, EQUAL, LESS_EQUAL, LESS, MAX }
         @Builder.Default
         private Mode mode = Mode.GREATER;
-        private Integer value; // threshold value
+        private Integer value; // threshold value (ignored for MAX)
     }
 
     @Getter
@@ -357,9 +357,9 @@ public class KPWebhookPreset
                     case BELOW: return statConfig.getSkill().name()+" < "+statConfig.getThreshold();
                 }
                 return "STAT ?";
-            case WIDGET:
-                if (widgetConfig==null) return "WIDGET ?";
-                return widgetConfig.getChildId()!=null? "WIDGET "+widgetConfig.getGroupId()+":"+widgetConfig.getChildId() : "WIDGET "+widgetConfig.getGroupId();
+            case WIDGET_SPAWN:
+                if (widgetConfig==null) return "WIDGET_SPAWN ?";
+                return widgetConfig.getChildId()!=null? "WIDGET_SPAWN "+widgetConfig.getGroupId()+":"+widgetConfig.getChildId() : "WIDGET_SPAWN "+widgetConfig.getGroupId();
             case PLAYER_SPAWN:
             case PLAYER_DESPAWN:
                 if (playerConfig==null) return (triggerType==TriggerType.PLAYER_SPAWN?"PLAYER_SPAWN":"PLAYER_DESPAWN")+" ?";
@@ -415,10 +415,14 @@ public class KPWebhookPreset
                     if (pAny.isEmpty()) return "PROJECTILE_ANY (alle)"; return "PROJECTILE_ANY "+shortJoin(pAny);
                 }
             case HITSPLAT_SELF:
-                if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
+                if (hitsplatConfig==null) return "HITSPLAT_SELF ?";
+                if (hitsplatConfig.getMode()==HitsplatConfig.Mode.MAX) return "HITSPLAT_SELF MAX";
+                if (hitsplatConfig.getValue()==null) return "HITSPLAT_SELF ?";
                 return "HITSPLAT_SELF "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
             case HITSPLAT_TARGET:
-                if (hitsplatConfig==null || hitsplatConfig.getValue()==null) return "HITSPLAT_TARGET ?";
+                if (hitsplatConfig==null) return "HITSPLAT_TARGET ?";
+                if (hitsplatConfig.getMode()==HitsplatConfig.Mode.MAX) return "HITSPLAT_TARGET MAX";
+                if (hitsplatConfig.getValue()==null) return "HITSPLAT_TARGET ?";
                 return "HITSPLAT_TARGET "+humanHitsplatMode(hitsplatConfig.getMode())+hitsplatConfig.getValue();
             case MESSAGE:
                 if (messageConfig==null) return "MESSAGE ?";
@@ -463,6 +467,8 @@ public class KPWebhookPreset
                 return "BELOW ";
             case EQUAL:
                 return "= "; // legacy / rarely used
+            case MAX:
+                return "MAX ";
             case GREATER:
             case GREATER_EQUAL:
             default:

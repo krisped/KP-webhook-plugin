@@ -8,6 +8,7 @@ import javax.swing.border.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection; // added for clipboard copy
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -103,6 +104,7 @@ public class KPWebhookPresetDialog extends JDialog
     // Screenshot settings removed - keeping it simple
     /* -------- Info Tab -------- */
     private JEditorPane infoPane; // replaced JTextArea
+    private JButton infoCopyBtn; // new copy button for info content
 
     private KPWebhookPreset result;
 
@@ -393,22 +395,38 @@ public class KPWebhookPresetDialog extends JDialog
         infoPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
         infoPane.setEditable(false);
         infoPane.setOpaque(false);
-        infoPane.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        infoPane.setFont(FontManager.getRunescapeFont().deriveFont(12f)); // use RuneScape font
         infoPane.setText(buildInfoHtml());
 
-        JPanel frame = new JPanel(new BorderLayout());
-        frame.setOpaque(true);
-        Color bg = new Color(32,32,38,245);
-        frame.setBackground(bg);
-        frame.setBorder(new CompoundBorder(new LineBorder(new Color(70,70,90)), new EmptyBorder(12,14,12,14)));
-        frame.add(infoPane, BorderLayout.CENTER);
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4,4));
+        toolbar.setOpaque(false);
+        infoCopyBtn = new JButton("Copy");
+        infoCopyBtn.setFocusable(false);
+        infoCopyBtn.setToolTipText("Copy all trigger/command reference to clipboard");
+        infoCopyBtn.addActionListener(e -> copyInfoReference());
+        toolbar.add(infoCopyBtn);
 
-        JScrollPane sp = new JScrollPane(frame, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        sp.setBorder(new EmptyBorder(6,6,6,6));
-        sp.getViewport().setOpaque(false);
-        sp.setOpaque(false);
+        JScrollPane sp = new JScrollPane(infoPane, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        sp.setBorder(new EmptyBorder(4,4,4,4));
+        sp.getViewport().setOpaque(false); sp.setOpaque(false);
+        p.add(toolbar, BorderLayout.NORTH);
         p.add(sp, BorderLayout.CENTER);
         return p;
+    }
+
+    private void copyInfoReference() {
+        try {
+            StringSelection sel = new StringSelection(stripHtml(infoPane.getText()));
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, sel);
+        } catch (Exception ignored) {}
+    }
+    private String stripHtml(String html) {
+        html = html.replaceAll("<br ?/?>","\n").replaceAll("<li>"," - ").replaceAll("</li>","\n")
+                .replaceAll("<[^>]+>","").replaceAll("&nbsp;"," ").replaceAll("&lt;","<")
+                .replaceAll("&gt;",">").replaceAll("&amp;","&");
+        // Remove extra spaces/tabs/newlines
+        html = html.replaceAll("[\\s]+", " ").trim();
+        return html;
     }
 
     private String buildInfoHtml() {
@@ -417,90 +435,146 @@ public class KPWebhookPresetDialog extends JDialog
         for (Skill s : Skill.values()) skillList.add(s.name());
         java.util.Collections.sort(skillList, String.CASE_INSENSITIVE_ORDER);
         String skillTokens = String.join(", ", skillList);
-        // Trigger descriptions mapping
+
+        // Trigger descriptions (will sort alphabetically)
         java.util.Map<String,String> triggerDesc = new java.util.HashMap<>();
-        triggerDesc.put("ANIMATION_ANY","Any animation (self or target) change");
-        triggerDesc.put("ANIMATION_SELF","Local player animation id");
-        triggerDesc.put("ANIMATION_TARGET","Current target animation id");
-        triggerDesc.put("GRAPHIC_ANY","Any graphic (self or target) change");
-        triggerDesc.put("GRAPHIC_SELF","Local player graphic id");
-        triggerDesc.put("GRAPHIC_TARGET","Current target graphic id");
-        triggerDesc.put("PROJECTILE_ANY","Any projectile (optional id filter)"); // new
-        triggerDesc.put("PROJECTILE_SELF","Projectile towards current target (id)"); // new
-        triggerDesc.put("PROJECTILE_TARGET","Projectile towards you (id)"); // new
-        triggerDesc.put("HITSPLAT_SELF","Damage you take (conditional)");
-        triggerDesc.put("HITSPLAT_TARGET","Damage your target takes (conditional)");
-        triggerDesc.put("MANUAL","Manual trigger");
-        triggerDesc.put("MESSAGE","Chat message filter");
-        triggerDesc.put("NPC_DESPAWN","NPC despawn – filter via list (id or name)");
-        triggerDesc.put("NPC_SPAWN","NPC spawn – filter via list (id or name)");
-        triggerDesc.put("PLAYER_DESPAWN","Player leaves area");
-        triggerDesc.put("PLAYER_SPAWN","Player enters area");
+        triggerDesc.put("ANIMATION_ANY","Any player/NPC animation id match");
+        triggerDesc.put("ANIMATION_SELF","Local player animation id match");
+        triggerDesc.put("ANIMATION_TARGET","Current target animation id match");
+        triggerDesc.put("GRAPHIC_ANY","Any player/NPC graphic");
+        triggerDesc.put("GRAPHIC_SELF","Local player graphic (spot anim)");
+        triggerDesc.put("GRAPHIC_TARGET","Current target graphic");
+        triggerDesc.put("HITSPLAT_SELF","Hitsplat on you passes comparison");
+        triggerDesc.put("HITSPLAT_TARGET","Hitsplat on target passes comparison");
+        triggerDesc.put("MESSAGE","Chat message filter (reserved)");
+        triggerDesc.put("MANUAL","Manual execution only");
+        triggerDesc.put("NPC_DESPAWN","NPC despawn (id/name list)");
+        triggerDesc.put("NPC_SPAWN","NPC spawn (id/name list)");
+        triggerDesc.put("PLAYER_DESPAWN","Player leaves scene");
+        triggerDesc.put("PLAYER_SPAWN","Player enters scene (filters)");
+        triggerDesc.put("PROJECTILE_ANY","Any projectile id in list (or all)");
+        triggerDesc.put("PROJECTILE_SELF","Projectile towards current target");
+        triggerDesc.put("PROJECTILE_TARGET","Projectile towards you");
         triggerDesc.put("STAT","Skill LEVEL_UP / ABOVE / BELOW");
-        triggerDesc.put("TICK","Every tick (light visuals only)");
-        triggerDesc.put("TARGET","Current combat target (changes / expiry)");
-        triggerDesc.put("VARBIT","Varbit changes to specific value");
-        triggerDesc.put("VARPLAYER","Varplayer changes to specific value");
+        triggerDesc.put("TARGET","Target acquired/lost");
+        triggerDesc.put("TICK","Every game tick (600ms)");
+        triggerDesc.put("VARBIT","Varbit id equals value");
+        triggerDesc.put("VARPLAYER","Varplayer id equals value");
         triggerDesc.put("WIDGET","Widget group[:child] loaded");
-        java.util.List<String> triggerNames = new java.util.ArrayList<>(triggerDesc.keySet());
-        java.util.Collections.sort(triggerNames, String.CASE_INSENSITIVE_ORDER);
-        StringBuilder triggerHtml = new StringBuilder();
-        for (String n : triggerNames) triggerHtml.append(li(n, triggerDesc.get(n)));
-        // Command descriptions mapping
-        java.util.Map<String,String> cmdDesc = new java.util.HashMap<>();
-        cmdDesc.put("HIGHLIGHT_*","Outline/Tile/Hull/Minimap (<="
-                +"0 persistent)");
-        cmdDesc.put("HIGHLIGHT_SCREEN","Full client border highlight (<="
-                +"0 persistent)");
-        cmdDesc.put("IMG_OVER|CENTER|UNDER <id>","Overhead image (item id, negative = sprite id) with optional target");
-        cmdDesc.put("INFOBOX <id> [tt]","Info box icon(s)");
-        cmdDesc.put("NOTIFY <text>","In-game chat message");
-        cmdDesc.put("OVERLAY_TEXT <text>","HUD overlay box");
-        cmdDesc.put("SCREENSHOT [text]","Send screenshot (optional caption)");
-        cmdDesc.put("SLEEP <ms>","Pause sequence ms");
-        cmdDesc.put("STOP","Stop all active sequences");
-        cmdDesc.put("STOP_RULE [id]","Stop visuals/sequences for one rule (omit id = current)");
-        cmdDesc.put("TEXT_OVER|CENTER|UNDER","Overhead text (<="
-                +"0 persistent) with optional target");
-        cmdDesc.put("TICK <n>","Delay n game ticks");
-        cmdDesc.put("WEBHOOK <text>","Send message to webhook");
-        java.util.List<String> cmdNames = new java.util.ArrayList<>(cmdDesc.keySet());
-        java.util.Collections.sort(cmdNames, String.CASE_INSENSITIVE_ORDER);
-        StringBuilder cmdTable = new StringBuilder();
-        cmdTable.append(headRow("Command","Description"));
-        for (String c : cmdNames) cmdTable.append(row(c, cmdDesc.get(c)));
-        String css = "<style>body{font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#E4E6EB;line-height:1.42;margin:0;padding:0;}h1{font-size:18px;margin:0 0 8px 0;color:#ffffff;}h2{font-size:14px;margin:18px 0 6px 0;color:#ffffff;border-bottom:1px solid #444;padding-bottom:2px;}table{border-collapse:collapse;width:100%;}th,td{padding:3px 4px;font-size:11px;vertical-align:top;}tr:nth-child(odd){background:#292c33;}code,pre{background:#1e1f24;color:#C6D0E3;border:1px solid #3a3d44;padding:4px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:11px;}pre{overflow-x:auto;}ul{margin:4px 0 8px 18px;padding:0;}li{margin:2px 0;}.dim{color:#9aa0ac;font-size:11px;}</style>";
-        return "<html>"+css+"<body>" +
-                "<h1>KP Webhook – Info</h1>" +
-                "<h2>Triggers</h2><ul>" + triggerHtml + "</ul>" +
-                "<h2>Commands</h2><table>" + cmdTable + "</table>" +
-                "<h2>Tokens</h2><ul>" +
-                li("${player}","Local player name")+
-                li("${stat}","Skill name")+
-                li("${current}/${value}","Boosted / threshold")+
-                li("${widgetGroup}/${widgetChild}","Widget IDs")+
-                li("${otherPlayer}/${otherCombat}","Other player name / combat")+
-                li("${npcName}/${npcId}","Matched NPC name / id")+
-                li("${TARGET}","Current target name (player or NPC, blank if none)")+
-                li("${WORLD}","World number")+
-                li("${STAT}/${CURRENT_STAT}","Real / boosted skill level")+
-                li("${message}/${messageTypeId}","Chat message & type id")+
-                li("IMG id","Positive = item id, negative = sprite id (IMG_* commands)")+ // fixed syntax
-                li("Skill tokens","Real & CURRENT_ for: "+skillTokens)+
-                li("HITSPLAT_SELF / HITSPLAT_TARGET","Latest matching hitsplat number (blank if none)")+ // added explicit hitsplat tokens
-                "</ul><div class='dim'>Varianter: ${NAME}, $NAME, {{NAME}}, legacy $SKILL.</div>"+
-                "<h2>Persistens <=0</h2><ul>"+
-                li("HIGHLIGHT_*","Upsert per rule (persistent if duration <=0)")+
-                li("TEXT_*","Persistent if duration <=0 (keyed per rule+pos+target)")+
-                li("IMG_*","Persistent if duration <=0 (overhead image stays until STOP / rule reset)")+
-                li("INFOBOX","Normal duration unless re-triggered")+
-                "</ul><h2>Example</h2><pre>NPC_SPAWN goblin\nHIGHLIGHT_OUTLINE TARGET\nTEXT_OVER TARGET $TARGET\n</pre></body></html>";
+        java.util.List<String> trigKeys = new java.util.ArrayList<>(triggerDesc.keySet());
+        java.util.Collections.sort(trigKeys, String.CASE_INSENSITIVE_ORDER);
+        StringBuilder trigList = new StringBuilder();
+        trigList.append("<div class='section'>");
+        for (String k : trigKeys) trigList.append(entryLine(k, triggerDesc.get(k)));
+        trigList.append("</div>");
+
+        // Command descriptions (alphabetical)
+        java.util.Map<String,String> cmdMap = new java.util.HashMap<>();
+        cmdMap.put("CUSTOM_MESSAGE <type|id> <text>", "Chat line with explicit ChatMessageType or numeric id");
+        cmdMap.put("HIGHLIGHT_HULL [target]", "Convex hull highlight");
+        cmdMap.put("HIGHLIGHT_MINIMAP [target]", "Minimap marker");
+        cmdMap.put("HIGHLIGHT_OUTLINE [target]", "Outline entity (0 ticks = persistent)");
+        cmdMap.put("HIGHLIGHT_SCREEN [target]", "Screen border / pulse");
+        cmdMap.put("HIGHLIGHT_TILE [target]", "Tile highlight");
+        cmdMap.put("IMG_CENTER [target] <id>", "Centered overhead image");
+        cmdMap.put("IMG_OVER [target] <id>", "Image above (item id or -sprite)");
+        cmdMap.put("IMG_UNDER [target] <id>", "Image under-feet");
+        cmdMap.put("INFOBOX <id> [label]", "Info box icon (ticks)");
+        cmdMap.put("NOTIFY <text>", "RuneLite + chat notification");
+        cmdMap.put("OVERLAY_TEXT <text>", "HUD overlay box");
+        cmdMap.put("SCREENSHOT [text]", "Capture & send (optional caption)");
+        cmdMap.put("SLEEP <ms>", "Real time delay");
+        cmdMap.put("STOP", "Stop all visuals & sequences");
+        cmdMap.put("STOP_RULE [id]", "Stop visuals for one rule");
+        cmdMap.put("TEXT_CENTER [target] <text>", "Centered text");
+        cmdMap.put("TEXT_OVER [target] <text>", "Text above");
+        cmdMap.put("TEXT_UNDER [target] <text>", "Text under-feet");
+        cmdMap.put("TICK [n]", "Delay n game ticks (default 1)");
+        cmdMap.put("WEBHOOK <text>", "Send plain content to webhook");
+        java.util.List<String> cmdKeys = new java.util.ArrayList<>(cmdMap.keySet());
+        java.util.Collections.sort(cmdKeys, String.CASE_INSENSITIVE_ORDER);
+        StringBuilder cmdList = new StringBuilder();
+        cmdList.append("<div class='section'>");
+        for (String k : cmdKeys) cmdList.append(entryLine(k, cmdMap.get(k)));
+        cmdList.append("</div>");
+
+        // Tokens (alphabetical)
+        java.util.Map<String,String> tokenMap = new java.util.HashMap<>();
+        tokenMap.put("$HITSPLAT","Latest hitsplat amount (self or target)");
+        tokenMap.put("$HITSPLAT_SELF","Latest hitsplat on you");
+        tokenMap.put("$HITSPLAT_TARGET","Latest hitsplat on target");
+        tokenMap.put("${CURRENT_STAT}", "Boosted value of trigger skill");
+        tokenMap.put("${STAT}", "Real level of trigger skill");
+        tokenMap.put("${TARGET}", "Current target name");
+        tokenMap.put("${current}", "Current boosted level (stat trigger)");
+        tokenMap.put("${npcId}", "Matched NPC id");
+        tokenMap.put("${npcName}", "Matched NPC name");
+        tokenMap.put("${otherCombat}", "Other player combat level");
+        tokenMap.put("${otherPlayer}", "Other player name");
+        tokenMap.put("${player}", "Local player name");
+        tokenMap.put("${time}", "ISO timestamp");
+        tokenMap.put("${value}", "Threshold value (stat/var/hitsplat)");
+        tokenMap.put("${widgetChild}", "Widget child id");
+        tokenMap.put("${widgetGroup}", "Widget group id");
+        tokenMap.put("${WORLD}", "World number");
+        // Skill token note
+        tokenMap.put("Skill tokens", "Each skill: $SKILL (real), $CURRENT_SKILL (boosted)");
+        java.util.List<String> tokenKeys = new java.util.ArrayList<>(tokenMap.keySet());
+        java.util.Collections.sort(tokenKeys, String.CASE_INSENSITIVE_ORDER);
+        StringBuilder tokenList = new StringBuilder(); tokenList.append("<div class='section'>");
+        for (String k : tokenKeys) tokenList.append(entryLine(k, tokenMap.get(k)));
+        tokenList.append("<div class='dim' style='margin-top:4px'>Placeholders also accept {{NAME}} or $NAME legacy forms.</div>");
+        tokenList.append("</div>");
+
+        String examples = "<pre># Example preset script\n" +
+                "NOTIFY Target engaged: $TARGET\n" +
+                "HIGHLIGHT_OUTLINE TARGET\n" +
+                "TEXT_OVER TARGET $TARGET *\n" +
+                "TICK 3\n" +
+                "CUSTOM_MESSAGE PM_TO Finishing $TARGET soon...\n" +
+                "SLEEP 1200\n" +
+                "SCREENSHOT BossPhase\n" +
+                "STOP_RULE\n" +
+                "</pre>";
+
+        String chatTypes = "<div class='section'><b>Chat Types:</b> Enum name, aliases (SYSTEMMESSAGE, PM_FROM, PM_TO, GAME_MSG, etc.) or numeric forms (7, ID:7, TYPE_7). Fallback = GAMEMESSAGE.</div>";
+        String targeting = "<div class='section'><b>Targeting:</b> LOCAL_PLAYER | PLAYER &lt;name&gt; | NPC &lt;name|id&gt; | TARGET. Omit = LOCAL_PLAYER.</div>";
+        String sequencing = "<div class='section'><b>Sequencing:</b> SLEEP = ms delay, TICK = game tick delay, commands run sequentially until a delay. STOP/STOP_RULE clear visuals.</div>";
+        String persistence = "<div class='section'><b>Persistence:</b> HIGHLIGHT_*, TEXT_*, IMG_*: duration 0 = persistent until STOP/STOP_RULE. INFOBOX counts down ticks.</div>";
+
+        String css = "<style>"+
+                "body{font-family:'RuneScape',Runescape,'Segoe UI',sans-serif;font-size:11px;color:#E2E2E2;line-height:1.42;margin:4px;}"+
+                "b{color:#F5F5F5;}"+
+                "code{background:#202225;padding:1px 4px;border-radius:3px;border:1px solid #2d3034;color:#EEE;font-size:11px;font-family:monospace;}"+
+                "pre{background:#151618;border:1px solid #2a2d30;padding:6px;border-radius:4px;overflow:auto;font-size:11px;color:#E0E0E0;}"+
+                ".section{margin:4px 0 10px 0;}"+
+                ".entry{margin:1px 0;} .entry code{margin-right:6px;}"+
+                ".dim{color:#9aa0ac;font-size:10px;}"+
+                "</style>";
+
+        return "<html><head>"+css+"</head><body>"+
+                "<h2>Triggers</h2>"+trigList+
+                "<h2>Commands</h2>"+cmdList+
+                "<h2>Tokens</h2>"+tokenList+
+                sequencing +
+                persistence +
+                targeting +
+                chatTypes +
+                "<h2>Skills</h2><div class='section'>"+escapeHtml(skillTokens)+"</div>"+
+                "<h2>Example</h2>"+examples+
+                "</body></html>";
     }
 
-    private String headRow(String a, String b){ return "<tr style='background:#333'><th style='text-align:left'>"+a+"</th><th style='text-align:left'>"+b+"</th></tr>"; }
-    private String row(String a, String b){ return "<tr><td><code>"+escapeHtml(a)+"</code></td><td>"+escapeHtml(b)+"</td></tr>"; }
-    private String li(String head, String desc){ return "<li><b>"+escapeHtml(head)+"</b>: "+escapeHtml(desc)+"</li>"; }
-    private String escapeHtml(String s){ if (s==null) return ""; return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
+    private String entryLine(String key, String desc){ return "<div class='entry'><code>"+escapeHtml(key)+"</code>"+escapeHtml(desc)+"</div>"; }
+
+    // Added back missing HTML escape helper
+    private static String escapeHtml(String s){
+        if (s == null) return "";
+        String out = s.replace("&","&amp;")
+                .replace("<","&lt;")
+                .replace(">","&gt;");
+        return out;
+    }
 
     private JPanel buildButtons()
     {
@@ -528,7 +602,7 @@ public class KPWebhookPresetDialog extends JDialog
             triggerTypeBox.setSelectedIndex(0);
             useDefaultWebhookBox.setSelected(false);
             customWebhookField.setText("");
-            activeBox.setSelected(true); // fixed
+            activeBox.setSelected(true); // fixed syntax
             if (categoryField != null) categoryField.setText("");
             updateTriggerVisibility();
             updateWebhookEnable();
@@ -563,7 +637,7 @@ public class KPWebhookPresetDialog extends JDialog
                 levelSpinner.setValue(r.getStatConfig().getThreshold());
             updateStatEnable();
         }
-        if (r.getTriggerType()== KPWebhookPreset.TriggerType.WIDGET && r.getWidgetConfig()!=null)
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.WIDGET_SPAWN && r.getWidgetConfig()!=null)
         {
             if (r.getWidgetConfig().getChildId()!=null)
                 widgetField.setText(r.getWidgetConfig().getGroupId()+":"+r.getWidgetConfig().getChildId());
@@ -636,9 +710,12 @@ public class KPWebhookPresetDialog extends JDialog
                         .build();
                 r.setHitsplatConfig(hc);
             }
-            String dir = (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS || hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL)? "Below":"Above";
+            String dir;
+            if (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.MAX) dir = "Max hit";
+            else dir = (hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS || hc.getMode()== KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL)? "Below":"Above";
             hitsplatModeBox.setSelectedItem(dir);
-            if (hc.getValue()!=null) hitsplatValueSpinner.setValue(hc.getValue());
+            if (hc.getMode()!= KPWebhookPreset.HitsplatConfig.Mode.MAX && hc.getValue()!=null) hitsplatValueSpinner.setValue(hc.getValue());
+            updateHitsplatValueEnable();
         }
         if (r.getTriggerType() == KPWebhookPreset.TriggerType.MESSAGE && r.getMessageConfig() != null)
         {
@@ -714,7 +791,7 @@ public class KPWebhookPresetDialog extends JDialog
                     .threshold(threshold)
                     .build();
         }
-        else if (trig == KPWebhookPreset.TriggerType.WIDGET)
+        else if (trig == KPWebhookPreset.TriggerType.WIDGET_SPAWN)
         {
             String txt = widgetField.getText().trim();
             if (txt.isEmpty()) { JOptionPane.showMessageDialog(this, "Enter widget group or group:child."); return; }
@@ -790,10 +867,16 @@ public class KPWebhookPresetDialog extends JDialog
                     .build();
         }
         else if (trig == KPWebhookPreset.TriggerType.HITSPLAT_SELF || trig == KPWebhookPreset.TriggerType.HITSPLAT_TARGET) {
-            Integer val = (Integer) hitsplatValueSpinner.getValue();
-            if (val == null) { JOptionPane.showMessageDialog(this, "Enter hitsplat value"); return; }
             String sel = (String) hitsplatModeBox.getSelectedItem();
-            KPWebhookPreset.HitsplatConfig.Mode mode = "Below".equals(sel)? KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL : KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+            KPWebhookPreset.HitsplatConfig.Mode mode;
+            Integer val = null;
+            if ("Max hit".equals(sel)) {
+                mode = KPWebhookPreset.HitsplatConfig.Mode.MAX;
+            } else {
+                mode = "Below".equals(sel)? KPWebhookPreset.HitsplatConfig.Mode.LESS_EQUAL : KPWebhookPreset.HitsplatConfig.Mode.GREATER_EQUAL;
+                val = (Integer) hitsplatValueSpinner.getValue();
+                if (val == null) { JOptionPane.showMessageDialog(this, "Enter hitsplat value"); return; }
+            }
             hitsplatCfg = KPWebhookPreset.HitsplatConfig.builder().mode(mode).value(val).build();
         }
         else if (trig == KPWebhookPreset.TriggerType.MESSAGE)
@@ -925,8 +1008,11 @@ public class KPWebhookPresetDialog extends JDialog
         dispose();
     }
 
+    /* ============== Restored helper methods & inner classes (previously truncated) ============== */
+
     private boolean commandsNeedWebhook(String text)
     {
+        if (text == null) return false;
         for (String line : text.split("\r?\n"))
         {
             String l = line.trim().toUpperCase(Locale.ROOT);
@@ -934,272 +1020,20 @@ public class KPWebhookPresetDialog extends JDialog
         }
         return false;
     }
-
     private String effectiveWebhookForSave(boolean useDef, String custom)
     {
         if (useDef)
         {
             String def = plugin.getDefaultWebhook();
-            if (!def.isBlank()) return def;
+            if (def != null && !def.isBlank()) return def;
         }
-        if (!custom.trim().isEmpty()) return custom.trim();
+        if (custom != null && !custom.trim().isEmpty()) return custom.trim();
         return null;
-    }
-
-    /* ================= Visibility ================= */
-    private void updateSettingsVisibility() { }
-
-    private void showHelp()
-    {
-        String msg =
-                "Commands: NOTIFY, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, TEXT_*\n" +
-                "Use the Settings tab to configure highlight & text visuals.\n" +
-                "Blink toggles visibility each tick.\n" +
-                "Color: click the swatch or 'Custom' for custom #RRGGBB.";
-        JOptionPane.showMessageDialog(this, msg, "Help", JOptionPane.INFORMATION_MESSAGE);
-    }
-
-    private void updateHeader(){
-        String name = titleField!=null? titleField.getText().trim():"";
-        if (name.isEmpty()) setTitle("Preset"); else setTitle(name);
-    }
-
-    private abstract static class SimpleDoc implements DocumentListener
-    { protected abstract void changed(); @Override public void insertUpdate(DocumentEvent e){ changed(); } @Override public void removeUpdate(DocumentEvent e){ changed(); } @Override public void changedUpdate(DocumentEvent e){ changed(); } }
-
-    /** Highlight panel */
-    private static class HighlightCategoryPanel extends JPanel
-    {
-        private final JSpinner durationSpinner;
-        private final JCheckBox blinkBox;
-        private final ColorPreview colorPreview;
-        private final int storedWidth;
-        private Color selectedColor;
-        HighlightCategoryPanel(int duration, String colorHex, boolean blink, int storedWidth, String title)
-        {
-            super(new GridBagLayout());
-            setBorder(new TitledBorder(title));
-            setOpaque(false);
-            this.storedWidth = storedWidth<=0?2:storedWidth;
-            GridBagConstraints c = new GridBagConstraints();
-            c.insets = new Insets(3,4,3,4);
-            c.fill = GridBagConstraints.HORIZONTAL;
-            c.anchor = GridBagConstraints.WEST;
-            c.weightx = 1; int y=0;
-            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; c.weightx=0; add(durLbl, c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,5000,1));
-            Dimension sd = durationSpinner.getPreferredSize();
-            durationSpinner.setPreferredSize(new Dimension(60, sd.height));
-            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false);
-            durRow.add(durationSpinner); durRow.add(new JLabel("ticks"));
-            c.gridx=1; c.weightx=1; add(durRow, c); y++;
-            JLabel blinkLbl = new JLabel("Blink"); blinkLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; c.weightx=0; add(blinkLbl, c);
-            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0)); blinkBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=1; add(blinkBox,c); y++;
-            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; c.weightx=0; add(colorLbl, c);
-            selectedColor = parse(colorHex, Color.YELLOW);
-            colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
-            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false);
-            JButton customBtn = new JButton("Custom"); customBtn.setMargin(new Insets(2,6,2,6)); customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            customBtn.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor); if (picked != null) setSelectedColor(picked); });
-            colorRow.add(colorPreview); colorRow.add(customBtn);
-            c.gridx=1; add(colorRow, c);
-            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
-            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
-        }
-        private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
-        private static Color parse(String hex, Color def){ try{ if(hex==null) return def; String h=hex.trim(); if(!h.startsWith("#")) h="#"+h; if(h.length()==7){return new Color(Integer.parseInt(h.substring(1,3),16),Integer.parseInt(h.substring(3,5),16),Integer.parseInt(h.substring(5,7),16));}}catch(Exception ignored){} return def; }
-        int getDuration(){ return (Integer)durationSpinner.getValue(); }
-        boolean isBlink(){ return blinkBox.isSelected(); }
-        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
-        int getStoredWidth(){ return storedWidth; }
-    }
-
-    private static class TextCategoryPanel extends JPanel
-    {
-        private final JSpinner durationSpinner;
-        private final JSpinner sizeSpinner;
-        private final JCheckBox blinkBox;
-        private final JCheckBox boldBox;
-        private final JCheckBox italicBox;
-        private final JCheckBox underlineBox;
-        private final ColorPreview colorPreview;
-        private Color selectedColor;
-        TextCategoryPanel(int duration, int size, String colorHex, boolean blink, boolean bold, boolean italic, boolean underline, String title)
-        {
-            super(new GridBagLayout());
-            setBorder(new TitledBorder(title));
-            setOpaque(false);
-            GridBagConstraints c = new GridBagConstraints();
-            c.insets = new Insets(3,4,3,4);
-            c.fill = GridBagConstraints.HORIZONTAL;
-            c.anchor = GridBagConstraints.WEST;
-            c.weightx = 1; int y=0;
-            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; add(durLbl, c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,5000,1));
-            Dimension ds = durationSpinner.getPreferredSize();
-            durationSpinner.setPreferredSize(new Dimension(60, ds.height));
-            JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("ticks"));
-            c.gridx=1; add(durRow, c); y++;
-            JLabel sizeLbl = new JLabel("Size"); sizeLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; add(sizeLbl, c);
-            sizeSpinner = new JSpinner(new SpinnerNumberModel(size,8,72,1));
-            Dimension ss = sizeSpinner.getPreferredSize();
-            sizeSpinner.setPreferredSize(new Dimension(60, ss.height));
-            c.gridx=1; add(sizeSpinner, c); y++;
-            JLabel blinkOnlyLbl = new JLabel("Blink"); blinkOnlyLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; add(blinkOnlyLbl, c);
-            blinkBox = new JCheckBox(); blinkBox.setMargin(new Insets(0,0,0,0)); blinkBox.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); blinkBox.setSelected(blink);
-            c.gridx=1; add(blinkBox, c); y++;
-            JLabel styleLbl = new JLabel("Style"); styleLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            JPanel styleRow = new JPanel(new FlowLayout(FlowLayout.LEFT,12,0)); styleRow.setOpaque(false);
-            boldBox = new JCheckBox("B", bold); boldBox.setToolTipText("Bold"); boldBox.setMargin(new Insets(0,0,0,0));
-            italicBox = new JCheckBox("I", italic); italicBox.setToolTipText("Italic"); italicBox.setMargin(new Insets(0,0,0,0));
-            underlineBox = new JCheckBox("U", underline); underlineBox.setToolTipText("Underline"); underlineBox.setMargin(new Insets(0,0,0,0));
-            for (JCheckBox cb : new JCheckBox[]{boldBox,italicBox,underlineBox}) cb.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            styleRow.add(boldBox); styleRow.add(italicBox); styleRow.add(underlineBox);
-            c.gridx=0; c.gridy=y; add(styleLbl, c); c.gridx=1; add(styleRow, c); y++;
-            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            c.gridx=0; c.gridy=y; add(colorLbl, c);
-            selectedColor = HighlightCategoryPanel.parse(colorHex, Color.WHITE);
-            colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
-            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false);
-            JButton customBtn = new JButton("Custom"); customBtn.setMargin(new Insets(2,6,2,6)); customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE));
-            customBtn.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor); if (picked!=null) setSelectedColor(picked); });
-            colorRow.add(colorPreview); colorRow.add(customBtn);
-            c.gridx=1; add(colorRow, c);
-            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height));
-            setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
-        }
-        private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
-        int getDuration(){ return (Integer)durationSpinner.getValue(); }
-        int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
-        boolean isBlink(){ return blinkBox.isSelected(); }
-        boolean isBold(){ return boldBox.isSelected(); }
-        boolean isItalic(){ return italicBox.isSelected(); }
-        boolean isUnderline(){ return underlineBox.isSelected(); }
-        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
-    }
-
-    private static class ScreenshotCategoryPanel extends JPanel { /* omitted for brevity (unchanged) */ }
-
-    private static class ColorPreview extends JPanel
-    {
-        private Color color;
-        private final java.util.function.Consumer<Color> setter;
-        private final Color[] palette = {
-                new Color(0xFFFFFF), new Color(0xC0C0C0), new Color(0x808080), new Color(0x000000),
-                new Color(0xFF0000), new Color(0xFFA500), new Color(0xFFFF00), new Color(0x00FF00),
-                new Color(0x00FFFF), new Color(0x0000FF), new Color(0x8000FF), new Color(0xFF00FF)
-        };
-        ColorPreview(Color initial, java.util.function.Consumer<Color> setter)
-        {
-            this.color = initial; this.setter = setter;
-            setPreferredSize(new Dimension(50,20)); setMaximumSize(new Dimension(50,20));
-            setBorder(BorderFactory.createLineBorder(Color.DARK_GRAY)); setToolTipText("Click to change color");
-            addMouseListener(new java.awt.event.MouseAdapter(){ @Override public void mouseClicked(java.awt.event.MouseEvent e){ showPalette(e.getComponent(), e.getX(), e.getY()); }});
-        }
-        private void showPalette(Component parent, int x, int y)
-        {
-            JPopupMenu menu = new JPopupMenu(); JPanel grid = new JPanel(new GridLayout(3,4,2,2)); grid.setBorder(new EmptyBorder(4,4,4,4));
-            for (Color c : palette)
-            {
-                JButton b = new JButton(); b.setBackground(c); b.setBorder(BorderFactory.createLineBorder(Color.DARK_GRAY)); b.setPreferredSize(new Dimension(24,20)); b.setToolTipText(String.format("#%02X%02X%02X", c.getRed(), c.getGreen(), c.getBlue()));
-                b.addActionListener(ev -> { setColor(c); setter.accept(c); menu.setVisible(false); }); grid.add(b);
-            }
-            menu.add(grid); menu.show(parent, x, y);
-        }
-        void setColor(Color c){ this.color=c; repaint(); }
-        @Override protected void paintComponent(Graphics g){ super.paintComponent(g); g.setColor(color); g.fillRect(0,0,getWidth(),getHeight()); }
-    }
-
-    private static class CollapsibleSection extends JPanel
-    {
-        private final JPanel content; private boolean expanded = false; private final JButton header; private final String title;
-        CollapsibleSection(JPanel inner)
-        {
-            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS)); setOpaque(false); this.content = inner; Border tmp = inner.getBorder(); this.title = tmp instanceof TitledBorder ? ((TitledBorder)tmp).getTitle() : "Section"; inner.setBorder(null);
-            header = new JButton(labelText()); header.setFocusPainted(false); header.setHorizontalAlignment(SwingConstants.LEFT); header.setBorderPainted(false); header.setContentAreaFilled(false); header.setOpaque(false); header.setMargin(new Insets(0,4,0,4)); header.setFont(FontManager.getRunescapeBoldFont().deriveFont(16f)); header.addActionListener(e -> toggle()); add(header); setAlignmentX(Component.LEFT_ALIGNMENT);
-        }
-        private String labelText(){ return (expanded ? "[-] " : "[+] ") + title; }
-        private void toggle()
-        {
-            expanded = !expanded; header.setText(labelText());
-            if (expanded)
-            {
-                JPanel wrap = new JPanel(); wrap.setLayout(new BoxLayout(wrap, BoxLayout.Y_AXIS)); wrap.setOpaque(false); wrap.setBorder(new EmptyBorder(4,18,6,4)); content.setAlignmentX(Component.LEFT_ALIGNMENT); wrap.add(content); wrap.setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH, wrap.getPreferredSize().height)); wrap.setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH, wrap.getPreferredSize().height)); add(wrap);
-            }
-            else { while (getComponentCount() > 1) remove(1); }
-            revalidate(); repaint();
-        }
-    }
-
-    private String[] buildTriggerModel()
-    {
-        KPWebhookPreset.TriggerType[] types = KPWebhookPreset.TriggerType.values();
-        java.util.List<String> names = new java.util.ArrayList<>();
-        for (KPWebhookPreset.TriggerType t : types) names.add(t.name());
-        java.util.Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
-        String[] data = new String[names.size() + 1]; data[0] = TRIGGER_PLACEHOLDER; for (int i=0;i<names.size();i++) data[i+1] = names.get(i); return data;
-    }
-
-    private JPanel buildTriggerCards()
-    {
-        JPanel cards = new JPanel(new CardLayout());
-        // STAT card
-        statCard = new JPanel(new GridBagLayout());
-        GridBagConstraints g = new GridBagConstraints(); g.insets = new Insets(4,4,4,4); g.fill = GridBagConstraints.HORIZONTAL; g.anchor = GridBagConstraints.WEST; g.weightx = 1; int y=0;
-        g.gridx=0; g.gridy=y; g.weightx=0; statCard.add(new JLabel("Skill"), g);
-        List<String> skills = new ArrayList<>(); skills.add(SKILL_PLACEHOLDER); for (Skill s : Skill.values()) skills.add(s.name()); java.util.Collections.sort(skills.subList(1, skills.size()), String.CASE_INSENSITIVE_ORDER);
-        statSkillBox = new JComboBox<>(skills.toArray(new String[0])); g.gridx=1; g.weightx=1; statCard.add(statSkillBox, g); y++;
-        g.gridx=0; g.gridy=y; g.weightx=0; statCard.add(new JLabel("Mode"), g); statModeBox = new JComboBox<>(KPWebhookPreset.StatMode.values()); g.gridx=1; g.weightx=1; statCard.add(statModeBox, g); y++;
-        g.gridx=0; g.gridy=y; g.weightx=0; statCard.add(new JLabel("Threshold"), g); levelHolderCard = new JPanel(new CardLayout()); JPanel levelPanel = new JPanel(new BorderLayout()); levelSpinner = new JSpinner(new SpinnerNumberModel(1,1,200,1)); levelPanel.add(levelSpinner, BorderLayout.WEST); levelHolderCard.add(new JPanel(), LEVEL_CARD_EMPTY); levelHolderCard.add(levelPanel, LEVEL_CARD_VISIBLE); g.gridx=1; g.weightx=1; statCard.add(levelHolderCard, g); y++;
-        statSkillBox.addActionListener(e -> updateStatEnable()); statModeBox.addActionListener(e -> updateStatEnable());
-        // WIDGET card
-        widgetCard = new JPanel(new GridBagLayout()); GridBagConstraints w = new GridBagConstraints(); w.insets = new Insets(4,4,4,4); w.fill = GridBagConstraints.HORIZONTAL; w.anchor=GridBagConstraints.WEST; w.weightx=1; int wy=0; w.gridx=0; w.gridy=wy; w.weightx=0; widgetCard.add(new JLabel("Widget (group[:child])"), w); widgetField = new JTextField(); w.gridx=1; w.weightx=1; widgetCard.add(widgetField, w); wy++;
-        // PLAYER card
-        playerCard = new JPanel(new GridBagLayout()); GridBagConstraints p = new GridBagConstraints(); p.insets = new Insets(4,4,4,4); p.fill=GridBagConstraints.HORIZONTAL; p.anchor=GridBagConstraints.WEST; p.weightx=1; int py=0; ButtonGroup grp = new ButtonGroup(); playerAllRadio = new JRadioButton("ALL players"); playerNameRadio = new JRadioButton("Specific name(s):"); playerCombatRadio = new JRadioButton("Combat level +/-"); grp.add(playerAllRadio); grp.add(playerNameRadio); grp.add(playerCombatRadio); playerAllRadio.setSelected(true); p.gridx=0; p.gridy=py++; p.gridwidth=2; playerCard.add(playerAllRadio,p); p.gridwidth=1; p.gridx=0; p.gridy=py; playerCard.add(playerNameRadio,p); playerNameField = new JTextField(); playerNameField.setToolTipText("Comma separated names"); p.gridx=1; playerCard.add(playerNameField,p); py++; p.gridx=0; p.gridy=py; playerCard.add(playerCombatRadio,p); playerCombatSpinner = new JSpinner(new SpinnerNumberModel(5,0,126,1)); p.gridx=1; playerCard.add(playerCombatSpinner,p); py++; Runnable upd = ()->{ playerNameField.setEnabled(playerNameRadio.isSelected()); playerCombatSpinner.setEnabled(playerCombatRadio.isSelected()); }; upd.run(); playerAllRadio.addActionListener(e->upd.run()); playerNameRadio.addActionListener(e->upd.run()); playerCombatRadio.addActionListener(e->upd.run());
-        // ANIMATION card
-        animationCard = new JPanel(new GridBagLayout()); GridBagConstraints a = new GridBagConstraints(); a.insets=new Insets(4,4,4,4); a.fill=GridBagConstraints.HORIZONTAL; a.anchor=GridBagConstraints.WEST; a.weightx=1; int ay=0; a.gridx=0; a.gridy=ay; a.weightx=0; animationCard.add(new JLabel("Animation ID(s)"), a); animationIdField = new JTextField(); a.gridx=1; a.weightx=1; animationCard.add(animationIdField,a); ay++;
-        // GRAPHIC card
-        graphicCard = new JPanel(new GridBagLayout()); GridBagConstraints gfc = new GridBagConstraints(); gfc.insets=new Insets(4,4,4,4); gfc.fill=GridBagConstraints.HORIZONTAL; gfc.anchor=GridBagConstraints.WEST; gfc.weightx=1; int gfy=0; gfc.gridx=0; gfc.gridy=gfy; gfc.weightx=0; graphicCard.add(new JLabel("Graphic ID(s)"), gfc); graphicIdField = new JTextField(); gfc.gridx=1; gfc.weightx=1; graphicCard.add(graphicIdField,gfc); gfy++;
-        // PROJECTILE card
-        projectileCard = new JPanel(new GridBagLayout()); GridBagConstraints prc = new GridBagConstraints(); prc.insets=new Insets(4,4,4,4); prc.fill=GridBagConstraints.HORIZONTAL; prc.anchor=GridBagConstraints.WEST; prc.weightx=1; int pry=0; prc.gridx=0; prc.gridy=pry; prc.weightx=0; projectileCard.add(new JLabel("Projectile ID(s)"), prc); projectileIdField = new JTextField(); projectileIdField.setToolTipText("Kommaseparerte projectile id'er. SELF/TARGET krever minst én. ANY kan stå tom for alle."); prc.gridx=1; prc.weightx=1; projectileCard.add(projectileIdField, prc); pry++;
-        // HITSPLAT card
-        hitsplatCard = new JPanel(new GridBagLayout()); GridBagConstraints hs = new GridBagConstraints(); hs.insets=new Insets(4,4,4,4); hs.fill=GridBagConstraints.HORIZONTAL; hs.anchor=GridBagConstraints.WEST; hs.weightx=1; int hsy=0; hs.gridx=0; hs.gridy=hsy; hs.weightx=0; hitsplatCard.add(new JLabel("Direction"), hs); hitsplatModeBox = new JComboBox<>(new String[]{"Above","Below"}); hs.gridx=1; hs.weightx=1; hitsplatCard.add(hitsplatModeBox,hs); hsy++; hs.gridx=0; hs.gridy=hsy; hs.weightx=0; hitsplatCard.add(new JLabel("Value"), hs); hitsplatValueSpinner = new JSpinner(new SpinnerNumberModel(1,0,5000,1)); hs.gridx=1; hs.weightx=1; hitsplatCard.add(hitsplatValueSpinner,hs); hsy++;
-        // MESSAGE card
-        messageCard = new JPanel(new GridBagLayout()); GridBagConstraints m = new GridBagConstraints(); m.insets=new Insets(4,4,4,4); m.fill=GridBagConstraints.HORIZONTAL; m.anchor=GridBagConstraints.WEST; m.weightx=1; int my=0; m.gridx=0; m.gridy=my; m.weightx=0; messageCard.add(new JLabel("Message ID"), m); messageIdSpinner = new JSpinner(new SpinnerNumberModel(0,-1,9999,1)); Dimension mid = messageIdSpinner.getPreferredSize(); messageIdSpinner.setPreferredSize(new Dimension(80, mid.height)); m.gridx=1; m.weightx=1; messageCard.add(messageIdSpinner, m); my++; m.gridx=0; m.gridy=my; m.weightx=0; messageCard.add(new JLabel("Message text"), m); messageTextField = new JTextField(); messageTextField.setToolTipText("Optional text to match. Use * for wildcards, '_' = space. ID -1 = ANY chat type."); m.gridx=1; m.weightx=1; messageCard.add(messageTextField,m); my++;
-        // VARBIT card multi
-        varbitCard = new JPanel(new GridBagLayout()); GridBagConstraints vb = new GridBagConstraints(); vb.insets=new Insets(4,4,4,4); vb.fill=GridBagConstraints.HORIZONTAL; vb.anchor=GridBagConstraints.WEST; vb.weightx=1; int vy=0; vb.gridx=0; vb.gridy=vy; vb.weightx=0; varbitCard.add(new JLabel("Varbit ID(s)"), vb); varbitIdsField = new JTextField(); varbitIdsField.setToolTipText("Kommaseparerte varbit id'er"); vb.gridx=1; vb.weightx=1; varbitCard.add(varbitIdsField, vb); vy++; vb.gridx=0; vb.gridy=vy; vb.weightx=0; varbitCard.add(new JLabel("Value"), vb); varbitValueSpinner = new JSpinner(new SpinnerNumberModel(0,0,255,1)); vb.gridx=1; vb.weightx=1; varbitCard.add(varbitValueSpinner,vb); vy++;
-        // VARPLAYER card multi
-        varplayerCard = new JPanel(new GridBagLayout()); GridBagConstraints vp = new GridBagConstraints(); vp.insets=new Insets(4,4,4,4); vp.fill=GridBagConstraints.HORIZONTAL; vp.anchor=GridBagConstraints.WEST; vp.weightx=1; int vpy=0; vp.gridx=0; vp.gridy=vpy; vp.weightx=0; varplayerCard.add(new JLabel("Varplayer ID(s)"), vp); varplayerIdsField = new JTextField(); varplayerIdsField.setToolTipText("Kommaseparerte varplayer id'er"); vp.gridx=1; vp.weightx=1; varplayerCard.add(varplayerIdsField,vp); vpy++; vp.gridx=0; vp.gridy=vpy; vp.weightx=0; varplayerCard.add(new JLabel("Value"), vp); varplayerValueSpinner = new JSpinner(new SpinnerNumberModel(0,0,255,1)); vp.gridx=1; vp.weightx=1; varplayerCard.add(varplayerValueSpinner,vp); vpy++;
-        // NPC card
-        npcCard = new JPanel(new GridBagLayout()); GridBagConstraints nc = new GridBagConstraints(); nc.insets=new Insets(4,4,4,4); nc.fill=GridBagConstraints.HORIZONTAL; nc.anchor=GridBagConstraints.WEST; nc.weightx=1; int ncy=0; nc.gridx=0; nc.gridy=ncy; nc.weightx=0; npcCard.add(new JLabel("NPC list"), nc); npcListField = new JTextField(); npcListField.setToolTipText("Kommaseparert liste: id eller navn. Navn med space -> underscore."); nc.gridx=1; nc.weightx=1; npcCard.add(npcListField,nc); ncy++;
-        // Add cards
-        cards.add(new JPanel(), "NONE");
-        cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
-        cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET.name());
-        cards.add(playerCard, "PLAYER");
-        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
-        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name());
-        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_SELF.name());
-        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name());
-        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name());
-        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_SELF.name());
-        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name());
-        cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
-        cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
-        cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
-        cards.add(npcCard, "NPC");
-        return cards;
     }
 
     private void updateTriggerVisibility()
     {
+        if (triggerCards == null) return;
         CardLayout cl = (CardLayout) (triggerCards.getLayout());
         String sel = (String) triggerTypeBox.getSelectedItem();
         if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) ||
@@ -1227,8 +1061,20 @@ public class KPWebhookPresetDialog extends JDialog
         updateStatEnable();
         applyTickDisable();
     }
-
-    private void applyTickDisable() {
+    private void updateWebhookEnable(){ if (customWebhookField != null) customWebhookField.setEnabled(!useDefaultWebhookBox.isSelected()); }
+    private void updateStatEnable()
+    {
+        if (statModeBox == null || levelHolderCard == null) return;
+        String trigSel = (String) triggerTypeBox.getSelectedItem();
+        if (!KPWebhookPreset.TriggerType.STAT.name().equals(trigSel)) return;
+        KPWebhookPreset.StatMode mode = (KPWebhookPreset.StatMode) statModeBox.getSelectedItem();
+        CardLayout cl = (CardLayout) levelHolderCard.getLayout();
+        if (mode == KPWebhookPreset.StatMode.ABOVE || mode == KPWebhookPreset.StatMode.BELOW)
+            cl.show(levelHolderCard, LEVEL_CARD_VISIBLE);
+        else
+            cl.show(levelHolderCard, LEVEL_CARD_EMPTY);
+    }
+    private void applyTickDisable(){
         boolean isTick = KPWebhookPreset.TriggerType.TICK.name().equals(triggerTypeBox.getSelectedItem());
         setPanelEnabled(outlinePanel, !isTick);
         setPanelEnabled(tilePanel, !isTick);
@@ -1240,71 +1086,7 @@ public class KPWebhookPresetDialog extends JDialog
         setPanelEnabled(textUnderPanel, !isTick);
         setPanelEnabled(overlayTextPanel, !isTick);
     }
-    private void setPanelEnabled(Component c, boolean enabled) { if (c == null) return; c.setEnabled(enabled); if (c instanceof Container) for (Component ch : ((Container)c).getComponents()) setPanelEnabled(ch, enabled); }
-
-    private void updateWebhookEnable() { customWebhookField.setEnabled(!useDefaultWebhookBox.isSelected()); }
-
-    private void updateStatEnable()
-    {
-        String trigSel = (String) triggerTypeBox.getSelectedItem();
-        boolean statMode = KPWebhookPreset.TriggerType.STAT.name().equals(trigSel);
-        if (!statMode) return;
-        KPWebhookPreset.StatMode mode = (KPWebhookPreset.StatMode) statModeBox.getSelectedItem();
-        CardLayout cl = (CardLayout) levelHolderCard.getLayout();
-        if (mode == KPWebhookPreset.StatMode.ABOVE || mode == KPWebhookPreset.StatMode.BELOW)
-            cl.show(levelHolderCard, LEVEL_CARD_VISIBLE);
-        else cl.show(levelHolderCard, LEVEL_CARD_EMPTY);
-    }
-
-    private static class InfoboxCategoryPanel extends JPanel {
-        private final JSpinner durationSpinner;
-        InfoboxCategoryPanel(int duration, String title) {
-            super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false);
-            GridBagConstraints c = new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.fill=GridBagConstraints.HORIZONTAL; c.anchor=GridBagConstraints.WEST; c.weightx=1; int y=0;
-            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(durLbl,c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); Dimension ds = durationSpinner.getPreferredSize(); durationSpinner.setPreferredSize(new Dimension(70, ds.height)); JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("ticks")); c.gridx=1; add(durRow,c); y++;
-            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height)); setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
-        }
-        int getDuration(){ return (Integer)durationSpinner.getValue(); }
-        boolean isBlink(){ return false; }
-        String getColorHex(){ return "#FFFFFF"; }
-    }
-
-    private static class OverlayTextPanel extends JPanel {
-        private final JSpinner durationSpinner; private final JSpinner sizeSpinner; private final ColorPreview colorPreview; private Color selectedColor;
-        OverlayTextPanel(int duration, int size, String colorHex, String title) {
-            super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false);
-            GridBagConstraints c = new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.fill=GridBagConstraints.HORIZONTAL; c.anchor=GridBagConstraints.WEST; c.weightx=1; int y=0;
-            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(durLbl,c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("ticks")); c.gridx=1; add(durRow,c); y++;
-            JLabel sizeLbl = new JLabel("Size"); sizeLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(sizeLbl,c);
-            sizeSpinner = new JSpinner(new SpinnerNumberModel(size,8,72,1)); c.gridx=1; add(sizeSpinner,c); y++;
-            JLabel colorLbl = new JLabel("Color"); colorLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(colorLbl,c);
-            selectedColor = HighlightCategoryPanel.parse(colorHex, Color.WHITE); colorPreview = new ColorPreview(selectedColor, this::setSelectedColor);
-            JPanel colorRow = new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); colorRow.setOpaque(false); JButton customBtn = new JButton("Custom"); customBtn.setMargin(new Insets(2,6,2,6)); customBtn.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); customBtn.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Choose color", selectedColor); if (picked!=null) setSelectedColor(picked); });
-            colorRow.add(colorPreview); colorRow.add(customBtn); c.gridx=1; add(colorRow,c); y++;
-            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height)); setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
-        }
-        private void setSelectedColor(Color c){ if (c!=null){ selectedColor=c; colorPreview.setColor(c);} }
-        int getDuration(){ return (Integer)durationSpinner.getValue(); }
-        int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
-        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
-    }
-
-    private static class ImgCategoryPanel extends JPanel {
-        private final JSpinner durationSpinner; private final JCheckBox blinkBox;
-        ImgCategoryPanel(int duration, boolean blink, String title) {
-            super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false);
-            GridBagConstraints c = new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.fill=GridBagConstraints.HORIZONTAL; c.anchor=GridBagConstraints.WEST; c.weightx=1; int y=0;
-            JLabel durLbl = new JLabel("Duration"); durLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(durLbl,c);
-            durationSpinner = new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); Dimension ds = durationSpinner.getPreferredSize(); durationSpinner.setPreferredSize(new Dimension(70, ds.height)); JPanel durRow = new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); durRow.setOpaque(false); durRow.add(durationSpinner); durRow.add(new JLabel("Ticks")); c.gridx=1; add(durRow,c); y++;
-            JLabel blinkLbl = new JLabel("Blink"); blinkLbl.setFont(FontManager.getRunescapeFont().deriveFont(BASE_FONT_SIZE)); c.gridx=0; c.gridy=y; add(blinkLbl,c);
-            blinkBox = new JCheckBox(); blinkBox.setSelected(blink); blinkBox.setMargin(new Insets(0,0,0,0)); c.gridx=1; add(blinkBox,c); y++;
-            setPreferredSize(new Dimension(COMPACT_PANEL_WIDTH-20, getPreferredSize().height)); setMaximumSize(new Dimension(COMPACT_PANEL_WIDTH-20, Integer.MAX_VALUE));
-        }
-        int getDuration(){ return (Integer)durationSpinner.getValue(); }
-        boolean isBlink(){ return blinkBox.isSelected(); }
-    }
+    private void setPanelEnabled(Component c, boolean enabled){ if (c==null) return; c.setEnabled(enabled); if (c instanceof Container) for (Component ch: ((Container)c).getComponents()) setPanelEnabled(ch, enabled); }
 
     private KPWebhookPreset.NpcConfig parseNpcList(String raw) {
         KPWebhookPreset.NpcConfig.NpcConfigBuilder b = KPWebhookPreset.NpcConfig.builder(); b.rawList(raw);
@@ -1312,8 +1094,126 @@ public class KPWebhookPresetDialog extends JDialog
         for (String part : raw.split(",")) { String t = part.trim(); if (t.isEmpty()) continue; String norm = t.replace(' ', '_').toLowerCase(Locale.ROOT); if (norm.matches("\\d+")) { try { ids.add(Integer.parseInt(norm)); } catch (NumberFormatException ignored) {} } else { names.add(norm); } }
         if (!ids.isEmpty()) b.npcIds(ids); if (!names.isEmpty()) b.npcNames(names); return b.build();
     }
+    private java.util.List<Integer> parseIntList(String raw){ java.util.List<Integer> list = new java.util.ArrayList<>(); if (raw==null || raw.isBlank()) return list; for (String p : raw.split("[;,\\s]+")) { if (p.isBlank()) continue; try { list.add(Integer.parseInt(p.trim())); } catch (Exception ignored) {} } return list; }
+    private String listToString(java.util.List<Integer> list){ if (list==null || list.isEmpty()) return ""; StringBuilder sb=new StringBuilder(); for (int i=0;i<list.size();i++){ if (i>0) sb.append(','); sb.append(list.get(i)); } return sb.toString(); }
+    private java.util.List<String> parseNameList(String raw){ java.util.List<String> out = new java.util.ArrayList<>(); if (raw==null||raw.isBlank()) return out; for (String p: raw.split(",")){ String t=p.trim(); if(!t.isEmpty()) out.add(t.toLowerCase(Locale.ROOT)); } return out; }
 
-    private java.util.List<Integer> parseIntList(String raw) { java.util.List<Integer> list = new java.util.ArrayList<>(); if (raw==null || raw.isBlank()) return list; for (String p : raw.split("[;,\\s]+")) { if (p.isBlank()) continue; try { list.add(Integer.parseInt(p.trim())); } catch (Exception ignored) {} } return list; }
-    private String listToString(java.util.List<Integer> list) { if (list==null || list.isEmpty()) return ""; StringBuilder sb=new StringBuilder(); for (int i=0;i<list.size();i++){ if(i>0) sb.append(','); sb.append(list.get(i)); } return sb.toString(); }
-    private java.util.List<String> parseNameList(String raw) { java.util.List<String> out=new java.util.ArrayList<>(); if (raw==null||raw.isBlank()) return out; for (String p: raw.split(",")) { String t=p.trim(); if(!t.isEmpty()) out.add(t.toLowerCase(Locale.ROOT)); } return out; }
+    /* -------- UI Panels (simplified restored versions) -------- */
+    private static class HighlightCategoryPanel extends JPanel {
+        private final JSpinner durationSpinner; private final JCheckBox blinkBox; private final ColorPreview colorPreview; private final int storedWidth; private Color selectedColor;
+        HighlightCategoryPanel(int duration, String colorHex, boolean blink, int width, String title){
+            super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false); this.storedWidth = width<=0?2:width;
+            GridBagConstraints c=new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.anchor=GridBagConstraints.WEST; c.fill=GridBagConstraints.HORIZONTAL; c.weightx=1; int y=0;
+            durationSpinner=new JSpinner(new SpinnerNumberModel(duration,0,5000,1)); blinkBox=new JCheckBox(); blinkBox.setSelected(blink); selectedColor=parse(colorHex, Color.YELLOW); colorPreview=new ColorPreview(selectedColor, this::setSelectedColor);
+            c.gridx=0; c.gridy=y; add(new JLabel("Duration"),c); c.gridx=1; add(durationSpinner,c); y++;
+            c.gridx=0; c.gridy=y; add(new JLabel("Blink"),c); c.gridx=1; add(blinkBox,c); y++;
+            c.gridx=0; c.gridy=y; add(new JLabel("Color"),c); JPanel row=new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); row.setOpaque(false); JButton custom=new JButton("Custom"); custom.addActionListener(e->{ Color picked=JColorChooser.showDialog(this,"Color", selectedColor); if(picked!=null) setSelectedColor(picked);}); row.add(colorPreview); row.add(custom); c.gridx=1; add(row,c);
+        }
+        private void setSelectedColor(Color c){ if(c!=null){ selectedColor=c; colorPreview.setColor(c);} }
+        private static Color parse(String hex, Color def){ try{ if(hex==null) return def; String h=hex.trim(); if(!h.startsWith("#")) h="#"+h; if(h.length()==7) return new Color(Integer.parseInt(h.substring(1,3),16),Integer.parseInt(h.substring(3,5),16),Integer.parseInt(h.substring(5,7),16)); }catch(Exception ignored){} return def; }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        boolean isBlink(){ return blinkBox.isSelected(); }
+        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+        int getStoredWidth(){ return storedWidth; }
+    }
+    private static class TextCategoryPanel extends JPanel {
+        private final JSpinner durationSpinner,sizeSpinner; private final JCheckBox blinkBox,boldBox,italicBox,underlineBox; private final ColorPreview colorPreview; private Color selectedColor;
+        TextCategoryPanel(int duration,int size,String colorHex,boolean blink,boolean bold,boolean italic,boolean underline,String title){
+            super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false);
+            GridBagConstraints c=new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.anchor=GridBagConstraints.WEST; c.fill=GridBagConstraints.HORIZONTAL; c.weightx=1; int y=0;
+            durationSpinner=new JSpinner(new SpinnerNumberModel(duration,0,5000,1)); sizeSpinner=new JSpinner(new SpinnerNumberModel(size,8,72,1)); blinkBox=new JCheckBox(); blinkBox.setSelected(blink); boldBox=new JCheckBox("B",bold); italicBox=new JCheckBox("I",italic); underlineBox=new JCheckBox("U",underline); selectedColor=HighlightCategoryPanel.parse(colorHex, Color.WHITE); colorPreview=new ColorPreview(selectedColor,this::setSelectedColor);
+            c.gridx=0;c.gridy=y;add(new JLabel("Duration"),c); c.gridx=1;add(durationSpinner,c); y++;
+            c.gridx=0;c.gridy=y;add(new JLabel("Size"),c); c.gridx=1;add(sizeSpinner,c); y++;
+            c.gridx=0;c.gridy=y;add(new JLabel("Blink"),c); c.gridx=1;add(blinkBox,c); y++;
+            c.gridx=0;c.gridy=y;add(new JLabel("Style"),c); JPanel sty=new JPanel(new FlowLayout(FlowLayout.LEFT,4,0)); sty.setOpaque(false); sty.add(boldBox); sty.add(italicBox); sty.add(underlineBox); c.gridx=1; add(sty,c); y++;
+            c.gridx=0;c.gridy=y;add(new JLabel("Color"),c); JPanel col=new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); col.setOpaque(false); JButton custom=new JButton("Custom"); custom.addActionListener(e->{ Color picked=JColorChooser.showDialog(this,"Color",selectedColor); if(picked!=null) setSelectedColor(picked);}); col.add(colorPreview); col.add(custom); c.gridx=1; add(col,c);
+        }
+        private void setSelectedColor(Color c){ if(c!=null){ selectedColor=c; colorPreview.setColor(c);} }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
+        boolean isBlink(){ return blinkBox.isSelected(); }
+        boolean isBold(){ return boldBox.isSelected(); }
+        boolean isItalic(){ return italicBox.isSelected(); }
+        boolean isUnderline(){ return underlineBox.isSelected(); }
+        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+    }
+    private static class OverlayTextPanel extends JPanel {
+        private final JSpinner durationSpinner,sizeSpinner; private final ColorPreview colorPreview; private Color selectedColor;
+        OverlayTextPanel(int duration,int size,String colorHex,String title){ super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false); GridBagConstraints c=new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.anchor=GridBagConstraints.WEST; c.fill=GridBagConstraints.HORIZONTAL; c.weightx=1; int y=0; durationSpinner=new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); sizeSpinner=new JSpinner(new SpinnerNumberModel(size,8,72,1)); selectedColor=HighlightCategoryPanel.parse(colorHex, Color.WHITE); colorPreview=new ColorPreview(selectedColor,this::setSelectedColor); c.gridx=0;c.gridy=y;add(new JLabel("Duration"),c); c.gridx=1;add(durationSpinner,c); y++; c.gridx=0;c.gridy=y;add(new JLabel("Size"),c); c.gridx=1;add(sizeSpinner,c); y++; c.gridx=0;c.gridy=y;add(new JLabel("Color"),c); JPanel col=new JPanel(new FlowLayout(FlowLayout.LEFT,6,0)); col.setOpaque(false); JButton custom=new JButton("Custom"); custom.addActionListener(e->{ Color picked=JColorChooser.showDialog(this,"Color",selectedColor); if(picked!=null) setSelectedColor(picked);}); col.add(colorPreview); col.add(custom); c.gridx=1;add(col,c);}
+        private void setSelectedColor(Color c){ if(c!=null){ selectedColor=c; colorPreview.setColor(c);} }
+        int getDuration(){ return (Integer)durationSpinner.getValue(); }
+        int getSizeValue(){ return (Integer)sizeSpinner.getValue(); }
+        String getColorHex(){ return String.format("#%02X%02X%02X", selectedColor.getRed(), selectedColor.getGreen(), selectedColor.getBlue()); }
+    }
+    private static class InfoboxCategoryPanel extends JPanel {
+        private final JSpinner durationSpinner; InfoboxCategoryPanel(int duration,String title){ super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false); GridBagConstraints c=new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.anchor=GridBagConstraints.WEST; c.fill=GridBagConstraints.HORIZONTAL; c.weightx=1; int y=0; durationSpinner=new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); c.gridx=0;c.gridy=y;add(new JLabel("Duration"),c); c.gridx=1;add(durationSpinner,c);} int getDuration(){ return (Integer)durationSpinner.getValue(); } boolean isBlink(){ return false; } String getColorHex(){ return "#FFFFFF"; }}
+    private static class ImgCategoryPanel extends JPanel { private final JSpinner durationSpinner; private final JCheckBox blinkBox; ImgCategoryPanel(int duration, boolean blink, String title){ super(new GridBagLayout()); setBorder(new TitledBorder(title)); setOpaque(false); GridBagConstraints c=new GridBagConstraints(); c.insets=new Insets(3,4,3,4); c.anchor=GridBagConstraints.WEST; c.fill=GridBagConstraints.HORIZONTAL; c.weightx=1; int y=0; durationSpinner=new JSpinner(new SpinnerNumberModel(duration,0,10000,1)); blinkBox=new JCheckBox(); blinkBox.setSelected(blink); c.gridx=0;c.gridy=y;add(new JLabel("Duration"),c); c.gridx=1;add(durationSpinner,c); y++; c.gridx=0;c.gridy=y;add(new JLabel("Blink"),c); c.gridx=1;add(blinkBox,c);} int getDuration(){ return (Integer)durationSpinner.getValue(); } boolean isBlink(){ return blinkBox.isSelected(); }}
+    private static class ColorPreview extends JPanel { private Color color; private final java.util.function.Consumer<Color> setter; ColorPreview(Color c, java.util.function.Consumer<Color> setter){ this.color=c; this.setter=setter; setPreferredSize(new Dimension(40,18)); setBorder(BorderFactory.createLineBorder(Color.DARK_GRAY)); addMouseListener(new java.awt.event.MouseAdapter(){ @Override public void mouseClicked(java.awt.event.MouseEvent e){ if(SwingUtilities.isLeftMouseButton(e)){ JColorChooser chooser=new JColorChooser(color); Color picked=JColorChooser.showDialog(ColorPreview.this, "Choose color", color); if(picked!=null){ setColor(picked); setter.accept(picked);} }}});} void setColor(Color c){ color=c; repaint(); } @Override protected void paintComponent(Graphics g){ super.paintComponent(g); g.setColor(color); g.fillRect(0,0,getWidth(),getHeight()); }}
+    private static class CollapsibleSection extends JPanel { private final JPanel content; private boolean expanded=false; final JButton header; CollapsibleSection(JPanel inner){ setLayout(new BoxLayout(this,BoxLayout.Y_AXIS)); setOpaque(false); this.content=inner; Border b=inner.getBorder(); String title=b instanceof TitledBorder? ((TitledBorder)b).getTitle():"Section"; inner.setBorder(null); header=new JButton(labelText(title)); header.setFocusPainted(false); header.setContentAreaFilled(false); header.setBorder(new EmptyBorder(0,4,0,4)); header.setHorizontalAlignment(SwingConstants.LEFT); header.addActionListener(e->toggle(title)); add(header); }
+        private String labelText(String t){ return (expanded?"[-] ":"[+] ")+t; }
+        private void toggle(String t){ expanded=!expanded; header.setText(labelText(t)); if(expanded){ JPanel wrap=new JPanel(); wrap.setLayout(new BoxLayout(wrap,BoxLayout.Y_AXIS)); wrap.setOpaque(false); wrap.setBorder(new EmptyBorder(4,18,6,4)); content.setAlignmentX(Component.LEFT_ALIGNMENT); wrap.add(content); add(wrap);} else { while(getComponentCount()>1) remove(1);} revalidate(); repaint(); }
+    }
+
+    // ===== Added missing foundational helper methods (restored) =====
+    private void updateHeader(){ String name = titleField!=null? titleField.getText().trim():""; setTitle(name.isEmpty()?"Preset":name); }
+    private void updateSettingsVisibility() { /* placeholder – could auto enable/disable */ }
+    private void showHelp(){ JOptionPane.showMessageDialog(this, "Configure highlight & text visuals in Settings tab. Use commands like HIGHLIGHT_OUTLINE, TEXT_OVER, WEBHOOK etc.", "Help", JOptionPane.INFORMATION_MESSAGE); }
+
+    private String[] buildTriggerModel(){ java.util.List<String> names=new java.util.ArrayList<>(); for (KPWebhookPreset.TriggerType t: KPWebhookPreset.TriggerType.values()) names.add(t.name()); java.util.Collections.sort(names,String.CASE_INSENSITIVE_ORDER); String[] arr=new String[names.size()+1]; arr[0]=TRIGGER_PLACEHOLDER; for(int i=0;i<names.size();i++) arr[i+1]=names.get(i); return arr; }
+
+    private JPanel buildTriggerCards(){
+        JPanel cards = new JPanel(new CardLayout());
+        // STAT
+        statCard = new JPanel(new GridBagLayout()); GridBagConstraints g = new GridBagConstraints(); g.insets=new Insets(4,4,4,4); g.fill=GridBagConstraints.HORIZONTAL; g.anchor=GridBagConstraints.WEST; g.weightx=1; int y=0;
+        g.gridx=0; g.gridy=y; statCard.add(new JLabel("Skill"), g); java.util.List<String> skills=new java.util.ArrayList<>(); skills.add(SKILL_PLACEHOLDER); for(Skill s: Skill.values()) skills.add(s.name()); java.util.Collections.sort(skills.subList(1,skills.size()), String.CASE_INSENSITIVE_ORDER); statSkillBox=new JComboBox<>(skills.toArray(new String[0])); g.gridx=1; statCard.add(statSkillBox,g); y++;
+        g.gridx=0; g.gridy=y; statCard.add(new JLabel("Mode"), g); statModeBox=new JComboBox<>(KPWebhookPreset.StatMode.values()); g.gridx=1; statCard.add(statModeBox,g); y++;
+        g.gridx=0; g.gridy=y; statCard.add(new JLabel("Threshold"), g); levelHolderCard=new JPanel(new CardLayout()); JPanel levelPanel=new JPanel(new BorderLayout()); levelSpinner=new JSpinner(new SpinnerNumberModel(1,1,200,1)); levelPanel.add(levelSpinner,BorderLayout.WEST); levelHolderCard.add(new JPanel(), LEVEL_CARD_EMPTY); levelHolderCard.add(levelPanel, LEVEL_CARD_VISIBLE); g.gridx=1; statCard.add(levelHolderCard,g); y++;
+        statModeBox.addActionListener(e->updateStatEnable());
+        // WIDGET
+        widgetCard = new JPanel(new GridBagLayout()); GridBagConstraints w = new GridBagConstraints(); w.insets=new Insets(4,4,4,4); w.fill=GridBagConstraints.HORIZONTAL; w.anchor=GridBagConstraints.WEST; w.weightx=1; int wy=0; w.gridx=0; w.gridy=wy; widgetCard.add(new JLabel("Widget"), w); widgetField=new JTextField(); w.gridx=1; widgetCard.add(widgetField,w);
+        // PLAYER
+        playerCard = new JPanel(new GridBagLayout()); GridBagConstraints p = new GridBagConstraints(); p.insets=new Insets(4,4,4,4); p.fill=GridBagConstraints.HORIZONTAL; p.anchor=GridBagConstraints.WEST; p.weightx=1; int py=0; ButtonGroup grp=new ButtonGroup(); playerAllRadio=new JRadioButton("ALL"); playerNameRadio=new JRadioButton("Names"); playerCombatRadio=new JRadioButton("Combat +/-"); grp.add(playerAllRadio); grp.add(playerNameRadio); grp.add(playerCombatRadio); playerAllRadio.setSelected(true); p.gridx=0; p.gridy=py++; p.gridwidth=2; playerCard.add(playerAllRadio,p); p.gridwidth=1; p.gridx=0; p.gridy=py; playerCard.add(playerNameRadio,p); playerNameField=new JTextField(); p.gridx=1; playerCard.add(playerNameField,p); py++; p.gridx=0; p.gridy=py; playerCard.add(playerCombatRadio,p); playerCombatSpinner=new JSpinner(new SpinnerNumberModel(5,0,126,1)); p.gridx=1; playerCard.add(playerCombatSpinner,p); Runnable upd=()->{ playerNameField.setEnabled(playerNameRadio.isSelected()); playerCombatSpinner.setEnabled(playerCombatRadio.isSelected()); }; upd.run(); playerAllRadio.addActionListener(e->upd.run()); playerNameRadio.addActionListener(e->upd.run()); playerCombatRadio.addActionListener(e->upd.run());
+        // ANIMATION
+        animationCard = new JPanel(new GridBagLayout()); GridBagConstraints a = new GridBagConstraints(); a.insets=new Insets(4,4,4,4); a.fill=GridBagConstraints.HORIZONTAL; a.anchor=GridBagConstraints.WEST; a.weightx=1; int ay=0; a.gridx=0; a.gridy=ay; animationCard.add(new JLabel("Animation IDs"), a); animationIdField=new JTextField(); a.gridx=1; animationCard.add(animationIdField,a);
+        // GRAPHIC
+        graphicCard = new JPanel(new GridBagLayout()); GridBagConstraints gc = new GridBagConstraints(); gc.insets=new Insets(4,4,4,4); gc.fill=GridBagConstraints.HORIZONTAL; gc.anchor=GridBagConstraints.WEST; gc.weightx=1; int gy=0; gc.gridx=0; gc.gridy=gy; graphicCard.add(new JLabel("Graphic IDs"), gc); graphicIdField=new JTextField(); gc.gridx=1; graphicCard.add(graphicIdField,gc);
+        // PROJECTILE
+        projectileCard = new JPanel(new GridBagLayout()); GridBagConstraints pr = new GridBagConstraints(); pr.insets=new Insets(4,4,4,4); pr.fill=GridBagConstraints.HORIZONTAL; pr.anchor=GridBagConstraints.WEST; pr.weightx=1; int pry=0; pr.gridx=0; pr.gridy=pry; projectileCard.add(new JLabel("Projectile IDs"), pr); projectileIdField=new JTextField(); pr.gridx=1; projectileCard.add(projectileIdField,pr);
+        // HITSPLAT
+        hitsplatCard = new JPanel(new GridBagLayout()); GridBagConstraints hs = new GridBagConstraints(); hs.insets=new Insets(4,4,4,4); hs.fill=GridBagConstraints.HORIZONTAL; hs.anchor=GridBagConstraints.WEST; hs.weightx=1; int hsy=0; hs.gridx=0; hs.gridy=hsy; hitsplatCard.add(new JLabel("Dir"), hs); hitsplatModeBox=new JComboBox<>(new String[]{"Above","Below","Max hit"}); hs.gridx=1; hitsplatCard.add(hitsplatModeBox,hs); hsy++; hs.gridx=0; hs.gridy=hsy; hitsplatCard.add(new JLabel("Value"), hs); hitsplatValueSpinner=new JSpinner(new SpinnerNumberModel(1,0,5000,1)); hs.gridx=1; hitsplatCard.add(hitsplatValueSpinner,hs);
+        hitsplatModeBox.addActionListener(e->{ updateHitsplatValueEnable(); }); updateHitsplatValueEnable();
+        // MESSAGE
+        messageCard = new JPanel(new GridBagLayout()); GridBagConstraints mc = new GridBagConstraints(); mc.insets=new Insets(4,4,4,4); mc.fill=GridBagConstraints.HORIZONTAL; mc.anchor=GridBagConstraints.WEST; mc.weightx=1; int mcy=0; mc.gridx=0; mc.gridy=mcy; messageCard.add(new JLabel("Msg ID"), mc); messageIdSpinner=new JSpinner(new SpinnerNumberModel(0,-1,9999,1)); mc.gridx=1; messageCard.add(messageIdSpinner,mc); mcy++; mc.gridx=0; mc.gridy=mcy; messageCard.add(new JLabel("Text"), mc); messageTextField=new JTextField(); mc.gridx=1; messageCard.add(messageTextField,mc);
+        // VARBIT
+        varbitCard = new JPanel(new GridBagLayout()); GridBagConstraints vb = new GridBagConstraints(); vb.insets=new Insets(4,4,4,4); vb.fill=GridBagConstraints.HORIZONTAL; vb.anchor=GridBagConstraints.WEST; vb.weightx=1; int vby=0; vb.gridx=0; vb.gridy=vby; varbitCard.add(new JLabel("Varbit IDs"), vb); varbitIdsField=new JTextField(); vb.gridx=1; varbitCard.add(varbitIdsField,vb); vby++; vb.gridx=0; vb.gridy=vby; varbitCard.add(new JLabel("Value"), vb); varbitValueSpinner=new JSpinner(new SpinnerNumberModel(0,0,255,1)); vb.gridx=1; varbitCard.add(varbitValueSpinner,vb);
+        // VARPLAYER
+        varplayerCard = new JPanel(new GridBagLayout()); GridBagConstraints vp = new GridBagConstraints(); vp.insets=new Insets(4,4,4,4); vp.fill=GridBagConstraints.HORIZONTAL; vp.anchor=GridBagConstraints.WEST; vp.weightx=1; int vpy=0; vp.gridx=0; vp.gridy=vpy; varplayerCard.add(new JLabel("Varplayer IDs"), vp); varplayerIdsField=new JTextField(); vp.gridx=1; varplayerCard.add(varplayerIdsField,vp); vpy++; vp.gridx=0; vp.gridy=vpy; varplayerCard.add(new JLabel("Value"), vp); varplayerValueSpinner=new JSpinner(new SpinnerNumberModel(0,0,255,1)); vp.gridx=1; varplayerCard.add(varplayerValueSpinner,vp);
+        // NPC
+        npcCard = new JPanel(new GridBagLayout()); GridBagConstraints nc = new GridBagConstraints(); nc.insets=new Insets(4,4,4,4); nc.fill=GridBagConstraints.HORIZONTAL; nc.anchor=GridBagConstraints.WEST; nc.weightx=1; int ncy=0; nc.gridx=0; nc.gridy=ncy; npcCard.add(new JLabel("NPC list"), nc); npcListField=new JTextField(); nc.gridx=1; npcCard.add(npcListField,nc);
+        // NONE placeholder
+        cards.add(new JPanel(), "NONE");
+        cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
+        cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET_SPAWN.name());
+        cards.add(playerCard, "PLAYER");
+        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
+        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name());
+        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_SELF.name());
+        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name());
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name());
+        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name());
+        cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
+        cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
+        cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
+        cards.add(npcCard, "NPC");
+        return cards;
+    }
+
+    private void updateHitsplatValueEnable(){
+        if (hitsplatModeBox==null || hitsplatValueSpinner==null) return;
+        String sel = (String) hitsplatModeBox.getSelectedItem();
+        boolean enable = sel!=null && !"Max hit".equals(sel);
+        hitsplatValueSpinner.setEnabled(enable);
+    }
+
+    private abstract static class SimpleDoc implements javax.swing.event.DocumentListener { protected abstract void changed(); public void insertUpdate(javax.swing.event.DocumentEvent e){changed();} public void removeUpdate(javax.swing.event.DocumentEvent e){changed();} public void changedUpdate(javax.swing.event.DocumentEvent e){changed();} }
 }
