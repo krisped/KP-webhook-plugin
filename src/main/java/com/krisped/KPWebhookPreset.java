@@ -198,6 +198,10 @@ public class KPWebhookPreset
     @Builder.Default
     private boolean active = true;
 
+    // New: auto-cancel visuals when trigger condition no longer matches (e.g., varbit changes away)
+    @Builder.Default
+    private boolean forceCancelOnChange = false;
+
     // Runtime state
     @Builder.Default
     private boolean lastConditionMet = false;

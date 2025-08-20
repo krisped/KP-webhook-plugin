@@ -82,7 +82,7 @@ public class KPWebhookPresetDialog extends JDialog
     private JCheckBox useDefaultWebhookBox;
     private JTextField customWebhookField;
     private JTextArea commandsArea;
-    private JCheckBox activeBox;
+    private JCheckBox forceCancelBox; // new: auto stop when condition no longer matches
     // Holder for trigger details panel to toggle visibility
     private JPanel triggerDetailsPanel;
     private JPanel npcCard; // new NPC trigger card
@@ -254,12 +254,15 @@ public class KPWebhookPresetDialog extends JDialog
         sp.setBorder(new TitledBorder("Commands"));
         g.gridx=0; g.gridy=y; g.gridwidth=2; g.weightx=1; g.weighty=1; g.fill=GridBagConstraints.BOTH; panel.add(sp, g); y++; g.gridwidth=1; g.weighty=0; g.fill=GridBagConstraints.HORIZONTAL;
 
-        // Active checkbox row
-        JLabel activeLbl = new JLabel("Active:"); activeLbl.setPreferredSize(labelDim);
-        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(activeLbl, g);
-        activeBox = new JCheckBox();
-        activeBox.setSelected(true);
-        g.gridx=1; g.weightx=1; panel.add(activeBox, g); y++;
+        // Active checkbox row removed. Always active initially; toggle exists in preset list UI.
+        // New force-cancel checkbox
+        JLabel fcSpacer = new JLabel(""); // spacer to align with other label column
+        fcSpacer.setPreferredSize(labelDim);
+        g.gridx=0; g.gridy=y; g.weightx=0; panel.add(fcSpacer, g);
+        forceCancelBox = new JCheckBox("Force cancel on change");
+        forceCancelBox.setOpaque(false);
+        forceCancelBox.setToolTipText("Hvis valgt: Stopper highlight/visuals når verdien ikke matcher lenger (f.eks varbit endrer verdi)");
+        g.gridx=1; g.weightx=1; panel.add(forceCancelBox, g); y++;
 
         // Listeners
         triggerTypeBox.addActionListener(e -> updateTriggerVisibility());
@@ -602,8 +605,8 @@ public class KPWebhookPresetDialog extends JDialog
             triggerTypeBox.setSelectedIndex(0);
             useDefaultWebhookBox.setSelected(false);
             customWebhookField.setText("");
-            activeBox.setSelected(true); // fixed syntax
             if (categoryField != null) categoryField.setText("");
+            forceCancelBox.setSelected(false);
             updateTriggerVisibility();
             updateWebhookEnable();
             return;
@@ -624,7 +627,7 @@ public class KPWebhookPresetDialog extends JDialog
         else
             commandsArea.setText(r.getCommands());
 
-        activeBox.setSelected(r.isActive());
+        forceCancelBox.setSelected(r.isForceCancelOnChange());
 
         updateTriggerVisibility();
         updateWebhookEnable();
@@ -946,7 +949,9 @@ public class KPWebhookPresetDialog extends JDialog
                 .webhookUrl(custom.trim())
                 .useDefaultWebhook(useDef)
                 .commands(cmds)
-                .active(activeBox.isSelected())
+                // active always true when created; preserve if updating
+                .active(existing!=null? existing.isActive(): true)
+                .forceCancelOnChange(forceCancelBox.isSelected())
                 .hlOutlineDuration(outlinePanel.getDuration())
                 .hlOutlineBlink(outlinePanel.isBlink())
                 .hlOutlineColor(outlinePanel.getColorHex())

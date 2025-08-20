@@ -54,16 +54,16 @@ public class KPWebhookDebugWindow extends JFrame {
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(6,6));
 
-        // New professional layout WITHOUT Desc column now: Trigger | ID | Type | Name
-        String[] cols = {"Trigger","ID","Type","Name"};
+        // New professional layout WITH Desc column restored: Trigger | ID | Type | Name | Desc
+        String[] cols = {"Trigger","ID","Type","Name","Desc"};
         model = new DefaultTableModel(cols, 0) { @Override public boolean isCellEditable(int r,int c){ return false; } };
         table = new JTable(model);
         sorter = new TableRowSorter<>(model); // initialize sorter before using
         table.setRowSorter(sorter);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        int[] widths = {140,110,300,360}; // matches 4 columns now
+        int[] widths = {110,70,120,160,360}; // shorter, more compact
         for (int i=0;i<widths.length;i++) table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
-        // Adjust table look for clearer row separation
+        // Adjust table look for clearer row separation + vertical dividers
         table.setShowHorizontalLines(false);
         table.setShowVerticalLines(false);
         table.setIntercellSpacing(new Dimension(0, 0));
@@ -74,7 +74,7 @@ public class KPWebhookDebugWindow extends JFrame {
         table.setGridColor(new Color(70,70,70));
         table.setSelectionBackground(new Color(55,90,160));
         table.setSelectionForeground(Color.WHITE);
-        // Custom renderer adds a subtle bottom divider and striping
+        // Custom renderer with subtle striping + right border as skillevegg
         DefaultTableCellRenderer base = new DefaultTableCellRenderer();
         base.setOpaque(true);
         TableCellRenderer striped = (tbl, value, isSelected, hasFocus, row, col) -> {
@@ -84,7 +84,9 @@ public class KPWebhookDebugWindow extends JFrame {
                 c.setForeground(new Color(225,225,225));
             }
             if (c instanceof JComponent) {
-                ((JComponent)c).setBorder(BorderFactory.createMatteBorder(0,0,1,0,new Color(60,60,60)));
+                Color divider = new Color(60,60,60);
+                int right = (col < tbl.getColumnCount()-1)?1:0; // vertical divider except last
+                ((JComponent)c).setBorder(BorderFactory.createMatteBorder(0,0,1,right,divider));
             }
             return c;
         };
@@ -173,14 +175,18 @@ public class KPWebhookDebugWindow extends JFrame {
 
     /* ================= Public logging API ================= */
     public void addMessage(ChatMessageType type, int typeId, String player, String value, String raw) {
-        logRow("MESSAGE", typeId>=0?String.valueOf(typeId):"", type.name(), nz(player), "");
+        // Show player name in Name, raw message in Desc
+        logRow("MESSAGE", typeId>=0?String.valueOf(typeId):"", type.name(), nz(player), nz(raw));
     }
-    public void logPlayerSpawn(boolean despawn, String name, int combat) { logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", "", "PLAYER", nz(name), ""); }
+    public void logPlayerSpawn(boolean despawn, String name, int combat, int localCombat) { int diff = combat - localCombat; String diffStr = (diff==0?"=": (diff>0?"+"+diff: String.valueOf(diff))); logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", combat>0?String.valueOf(combat):"", "PLAYER", nz(name), diffStr); }
     public void logWidget(int groupId, Integer childId) { logRow("WIDGET", childId==null?String.valueOf(groupId):groupId+":"+childId, "WIDGET", "", ""); }
     public void logVarbit(int id, int value) { logRow("VARBIT", String.valueOf(id), String.valueOf(value), "", ""); }
     public void logVarplayer(int id, int value) { logRow("VARPLAYER", String.valueOf(id), String.valueOf(value), "", ""); }
-    public void logStat(String skillName, int real, int boosted) { logRow("STAT", "", skillName, skillName, ""); }
-    public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name), ""); }
+    public void logStat(String skillName, int real, int boosted) {
+        String idCol = boosted + "/" + real; // boosted/base
+        logRow("STAT", idCol, "STAT", skillName, "");
+    }
+    public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name)+(npcId>0?" ("+npcId+")":""), combat>0?"cb="+combat:""); }
     public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", self?"PLAYER":"NPC", nz(actorName), "dmg="+amount); }
     public void logAnimation(boolean self, boolean target, int animId) {
         String trig = self? (target?"ANIMATION_ANY":"ANIMATION_SELF") : (target?"ANIMATION_TARGET":"ANIMATION_ANY");
@@ -198,7 +204,7 @@ public class KPWebhookDebugWindow extends JFrame {
         if (p == null) return;
         String tgtType = ""; String tgtName = "";
         if (target instanceof net.runelite.api.Player) { tgtType = "PLAYER"; try { tgtName = ((net.runelite.api.Player)target).getName(); } catch (Exception ignored) {} }
-        else if (target instanceof net.runelite.api.NPC) { tgtType = "NPC"; try { tgtName = ((net.runelite.api.NPC)target).getName(); } catch (Exception ignored) {} }
+        else if (target instanceof net.runelite.api.NPC) { tgtType = "NPC"; try { int nid=((net.runelite.api.NPC)target).getId(); tgtName = ((net.runelite.api.NPC)target).getName(); if(tgtName!=null) tgtName = tgtName + " ("+nid+")"; } catch (Exception ignored) {} }
         logRow(trigger, String.valueOf(p.getId()), tgtType.isEmpty()?"PROJECTILE":tgtType, nz(tgtName), projectileDesc(p.getId()));
     }
     public void logAnimationActor(String trigger, net.runelite.api.Actor a, int animId) {
@@ -226,14 +232,13 @@ public class KPWebhookDebugWindow extends JFrame {
     private String build(String base, String detail) { return detail==null||detail.isBlank()? base : base+" "+detail; }
 
     private void logRow(String trigger, String id, String type, String name, String desc) {
-        // Desc ignored (column removed)
         if (!acceptsTrigger(trigger) || !isDisplayable()) return;
         SwingUtilities.invokeLater(() -> {
             if (totalRows >= MAX_ROWS) {
                 while (model.getRowCount() > MAX_ROWS - 1) { model.removeRow(0); totalRows--; }
             }
             totalRows++;
-            model.addRow(new Object[]{nz(trigger), nz(id), nz(type), nz(name)});
+            model.addRow(new Object[]{nz(trigger), nz(id), nz(type), nz(name), nz(desc)});
             updateCount();
             if (autoScroll.isSelected()) {
                 int last = model.getRowCount()-1; if (last>=0) table.scrollRectToVisible(table.getCellRect(last,0,true));

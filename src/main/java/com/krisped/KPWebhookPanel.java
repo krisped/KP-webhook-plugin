@@ -155,9 +155,9 @@ public class KPWebhookPanel extends PluginPanel {
 
         applyPresetTooltip(preset, row, titleLbl, activeBox, indicator, center);
         JPopupMenu popup = new JPopupMenu();
-        JMenuItem editItem = new JMenuItem("Edit"); JMenuItem runItem = new JMenuItem("Run script"); JMenuItem deleteItem = new JMenuItem("Delete");
-        editItem.addActionListener(e -> openDialog(preset)); runItem.addActionListener(e -> plugin.manualSend(preset.getId())); deleteItem.addActionListener(e -> { if(JOptionPane.showConfirmDialog(this, "Delete '"+preset.getTitle()+"'?", "Confirm", JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION){ plugin.deleteRule(preset.getId()); refreshTable(); }});
-        popup.add(editItem); popup.add(runItem); popup.addSeparator(); popup.add(deleteItem);
+        JMenuItem editItem = new JMenuItem("Edit"); JMenuItem runItem = new JMenuItem("Run script"); JMenuItem duplicateItem = new JMenuItem("Duplicate"); JMenuItem deleteItem = new JMenuItem("Delete");
+        editItem.addActionListener(e -> openDialog(preset)); runItem.addActionListener(e -> plugin.manualSend(preset.getId())); duplicateItem.addActionListener(e -> { plugin.duplicateRule(preset.getId()); refreshTable(); }); deleteItem.addActionListener(e -> { if(JOptionPane.showConfirmDialog(this, "Delete '"+preset.getTitle()+"'?", "Confirm", JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION){ plugin.deleteRule(preset.getId()); refreshTable(); }});
+        popup.add(editItem); popup.add(runItem); popup.add(duplicateItem); popup.addSeparator(); popup.add(deleteItem);
         MouseAdapter pop = new MouseAdapter(){ private void showPop(MouseEvent e){ if(e.isPopupTrigger()) popup.show(e.getComponent(), e.getX(), e.getY()); } @Override public void mousePressed(MouseEvent e){showPop(e);} @Override public void mouseReleased(MouseEvent e){showPop(e);} };
         for (JComponent c : new JComponent[]{row, center, titleLbl, activeBox, indicator}) c.addMouseListener(pop);
         return row;
