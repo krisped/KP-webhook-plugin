@@ -50,6 +50,9 @@ import java.util.regex.Pattern;
         tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile"}
 )
 public class KPWebhookPlugin extends Plugin {
+    // Anti-spam cache for heavy commands in TICK presets
+    private final Map<Integer, Set<String>> tickRulePersistentCommands = new HashMap<>();
+
     // === Chat message type alias map ===
     private static final Map<String, ChatMessageType> CHAT_TYPE_ALIASES = new HashMap<>();
     private static final Set<String> CHAT_SUFFIXES = new LinkedHashSet<>(Arrays.asList("RECEIVED","SENT","IN","OUT","MESSAGE","MSG","CHAT"));
@@ -108,6 +111,8 @@ public class KPWebhookPlugin extends Plugin {
     public List<KPWebhookPreset> getRules(){ return rules; }
     public void addOrUpdate(KPWebhookPreset p){ if(p==null) return; // normalize category: trim and reuse existing category casing if present
         String previousTitle=null; if(p.getId()>=0){ KPWebhookPreset existing = find(p.getId()); if(existing!=null) previousTitle = existing.getTitle(); }
+        // Clear spam cache for rule being updated so changes reapply
+        if(p.getId()>=0) tickRulePersistentCommands.remove(p.getId());
         if(p.getCategory()!=null){ String raw=p.getCategory().trim(); if(raw.isEmpty()) p.setCategory(null); else {
                 for(KPWebhookPreset existing: rules){ if(existing.getCategory()!=null && existing.getCategory().equalsIgnoreCase(raw)){ p.setCategory(existing.getCategory()); break; } }
                 if(p.getCategory()!=null) p.setCategory(p.getCategory().trim());
@@ -137,7 +142,7 @@ public class KPWebhookPlugin extends Plugin {
 
     // Stop rule cleanup
     private void stopRule(int ruleId){ cancelSequencesForRule(ruleId); removeOverheadsForRule(ruleId,true); removePersistentOverheadsForRule(ruleId); try{highlightManager.removeAllByRule(ruleId);}catch(Exception ignored){} overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); try { overlayTextManager.removeByRule(ruleId);} catch(Exception ignored){} try{ if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(ruleId);}catch(Exception ignored){} // remove marked tiles
-        markedTiles.removeIf(mt-> mt!=null && mt.ruleId==ruleId); }
+        markedTiles.removeIf(mt-> mt!=null && mt.ruleId==ruleId); tickRulePersistentCommands.remove(ruleId); }
 
     // Soft cancel invoked when forceCancelOnChange conditions revert; keeps rule active for future triggers
     private void softCancelOnChange(KPWebhookPreset r){
@@ -167,6 +172,8 @@ public class KPWebhookPlugin extends Plugin {
 
     /* === Game Tick === */
     @Subscribe public void onGameTick(GameTick t){ gameTickCounter++; seenProjectiles.clear(); updateAndProcessTarget(); if(tickTriggerService!=null){ tickTriggerService.process(rules, overheadTexts); if(debugWindow!=null && debugWindow.isVisible()){ for(KPWebhookPreset r: rules){ if(r!=null && r.isActive() && r.getTriggerType()== KPWebhookPreset.TriggerType.TICK){ try{ debugWindow.logTickRule(r.getId(), r.getTitle()); }catch(Exception ignored){} } } } }
+        // Execute all TICK rules each tick (sequence guard prevents duplicates)
+        for(KPWebhookPreset r: rules){ if(r!=null && r.isActive() && r.getTriggerType()== KPWebhookPreset.TriggerType.TICK){ executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig()); } }
         // Sequences
         if(!activeSequences.isEmpty()){ long now=System.currentTimeMillis(); Iterator<CommandSequence> it=activeSequences.iterator(); while(it.hasNext()){ CommandSequence seq=it.next(); if(seq.tickDelayRemaining>0){ seq.tickDelayRemaining--; continue; } if(seq.sleepUntilMillis>0 && now<seq.sleepUntilMillis) continue; int safety=0; while(seq.index<seq.commands.size() && safety<1000){ PendingCommand pc=seq.commands.get(seq.index); if(pc.type==PendingType.TICK_DELAY){ seq.tickDelayRemaining=Math.max(1,pc.ticks); seq.index++; break; } else if(pc.type==PendingType.SLEEP_DELAY){ seq.sleepUntilMillis=now+Math.max(0,pc.sleepMs); seq.index++; break; } else { processActionLine(seq.rule, pc.line, seq.ctx); seq.index++; } safety++; } if(seq.index>=seq.commands.size()) it.remove(); } }
         // Tick visuals
@@ -209,6 +216,15 @@ public class KPWebhookPlugin extends Plugin {
 
     // COMMAND PROCESSOR
     private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx){ if(line==null|| line.isBlank()) return; String raw=line.trim(); String up=raw.toUpperCase(Locale.ROOT); try {
+        // Anti-spam for TICK heavy commands
+        if(rule!=null && rule.getTriggerType()== KPWebhookPreset.TriggerType.TICK){
+            if(isSpamProtectedCommand(up)){
+                Set<String> set = tickRulePersistentCommands.computeIfAbsent(rule.getId(), k-> new HashSet<>());
+                String key = normalizeSpamCommand(raw);
+                if(set.contains(key)) return; // already applied
+                set.add(key);
+            }
+        }
         // MARK_TILE <colorOrHex> <x,y[,plane]> [label...]
         if(up.startsWith("MARK_TILE")){
             handleMarkTile(rule, raw.substring(9).trim(), ctx);
@@ -227,7 +243,6 @@ public class KPWebhookPlugin extends Plugin {
             if(space>0){ String catPart = rest.substring(0, space).trim(); String flagPart = rest.substring(space+1).trim(); boolean on = flagPart.equals("1") || flagPart.equalsIgnoreCase("ON"); toggleGroup(catPart, on); }
             return; }
          if(up.equals("STOP")|| up.equals("STOP_RULE")){ if(rule!=null) stopRule(rule.getId()); return;} if(up.startsWith("STOP ")|| up.startsWith("STOP_RULE ")){ String a=raw.substring(raw.indexOf(' ')+1).trim(); if(a.equalsIgnoreCase("ALL")){ for(KPWebhookPreset r: rules) stopRule(r.getId()); } else { try{ int rid=Integer.parseInt(a); stopRule(rid);}catch(Exception ignored){} } return;} if(up.startsWith("NOTIFY ")){ notifyRuneLite(expand(raw.substring(7).trim(), ctx)); return;} if(up.startsWith("CUSTOM_MESSAGE ")){ handleCustomMessage(raw.substring(14).trim(), ctx); return;} if(up.startsWith("WEBHOOK")){ String msg=raw.length()>7? raw.substring(7).trim():""; String webhook = (rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) sendWebhookMessage(webhook, expand(msg, ctx)); return;} if(up.startsWith("SCREENSHOT")){ String msg=raw.length()>10? raw.substring(10).trim():""; String webhook=(rule!=null && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank())? rule.getWebhookUrl().trim(): getDefaultWebhook(); if(!webhook.isBlank()) captureAndSendSimpleScreenshot(webhook, expand(msg, ctx)); return;} if(up.startsWith("HIGHLIGHT_")){ if(highlightCommandHandler!=null && rule!=null) highlightCommandHandler.handle(raw, rule); return;} if(up.startsWith("OVERLAY_TEXT")){ if(overlayTextCommandHandler!=null && rule!=null) overlayTextCommandHandler.handle(raw, rule); return;} if(up.startsWith("INFOBOX")){ if(infoboxCommandHandler!=null && rule!=null) infoboxCommandHandler.handle(raw, rule, ctx); return;} if(up.startsWith("TEXT_OVER")|| up.startsWith("TEXT_UNDER")|| up.startsWith("TEXT_CENTER")){ handleTargetedTextCommand(rule, raw, ctx); return;} if(up.startsWith("IMG_OVER")|| up.startsWith("IMG_UNDER")|| up.startsWith("IMG_CENTER")){ handleImageCommand(rule, raw, ctx); return;} } catch(Exception e){ log.debug("processActionLine fail: {} => {}", raw, e.toString()); } }
-
     private void handleCustomMessage(String remainder, Map<String,String> ctx){ if(remainder==null||remainder.isBlank()) return; String[] parts=remainder.split("\\s+",2); if(parts.length<2) return; ChatMessageType type=resolveChatMessageType(parts[0]); String msg=expand(parts[1], ctx); try{ client.addChatMessage(type,"", msg,null);}catch(Exception ignored){} }
     private ChatMessageType resolveChatMessageType(String token){ if(token==null) return ChatMessageType.GAMEMESSAGE; String up=token.trim().toUpperCase(Locale.ROOT);
         // Try alias/name lookup first
@@ -431,4 +446,7 @@ public class KPWebhookPlugin extends Plugin {
             try { int a=Integer.parseInt(h.substring(0,2),16); int r=Integer.parseInt(h.substring(2,4),16); int g=Integer.parseInt(h.substring(4,6),16); int b=Integer.parseInt(h.substring(6,8),16); return new Color(r,g,b,a); }catch(Exception ignored){}
         }
         return Color.WHITE; }
+    // Spam-protected command helpers
+    private boolean isSpamProtectedCommand(String up){ return up.startsWith("HIGHLIGHT_") || up.startsWith("MARK_TILE") || up.startsWith("TEXT_OVER") || up.startsWith("TEXT_UNDER") || up.startsWith("TEXT_CENTER") || up.startsWith("IMG_OVER") || up.startsWith("IMG_UNDER") || up.startsWith("IMG_CENTER"); }
+    private String normalizeSpamCommand(String raw){ return raw==null?"": raw.trim().replaceAll("\\s+"," ").toUpperCase(Locale.ROOT); }
 }
