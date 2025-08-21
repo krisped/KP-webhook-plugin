@@ -34,7 +34,8 @@ public class KPWebhookPreset
         TARGET,
         PROJECTILE_SELF, // new
         PROJECTILE_TARGET, // new
-        PROJECTILE_ANY // new
+        PROJECTILE_ANY, // new
+        IDLE // newly added idle trigger
     }
 
     public enum StatMode
@@ -171,6 +172,16 @@ public class KPWebhookPreset
         private java.util.List<Integer> projectileIds; // new multi-id support (null/empty = any for *_ANY)
     }
 
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class IdleConfig {
+        @Builder.Default
+        private int thresholdMs = 0; // default 0: trigger as soon as client considers player idle
+    }
+
     @Builder.Default
     private int id = -1;
 
@@ -188,6 +199,7 @@ public class KPWebhookPreset
     private VarplayerConfig varplayerConfig;
     private NpcConfig npcConfig; // new optional npc config
     private ProjectileConfig projectileConfig; // new projectile config
+    private IdleConfig idleConfig; // new idle config
 
     private String webhookUrl;
     @Builder.Default
@@ -448,6 +460,8 @@ public class KPWebhookPreset
                 if (!vpl.isEmpty()) vp += " "+shortJoin(vpl);
                 if (varplayerConfig.getValue()!=null) vp += " = "+varplayerConfig.getValue();
                 return vp;
+            case IDLE:
+                return idleConfig!=null? ("IDLE "+ idleConfig.getThresholdMs()+"ms") : "IDLE ?";
             default: return "?";
         }
     }

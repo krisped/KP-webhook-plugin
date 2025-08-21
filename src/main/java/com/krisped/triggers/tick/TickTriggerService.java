@@ -53,7 +53,7 @@ public class TickTriggerService {
     }
 
     private void parseAndUpsertTargetedHighlight(KPWebhookPreset rule, String line) {
-        // Accept: HIGHLIGHT_<TYPE> [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET]
+        // Accept: HIGHLIGHT_<TYPE> [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS]
         String upper = line.toUpperCase(Locale.ROOT);
         HighlightType type = null;
         if (upper.startsWith("HIGHLIGHT_OUTLINE")) type = HighlightType.OUTLINE;
@@ -79,6 +79,20 @@ public class TickTriggerService {
                     else { targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.NPC_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeName(spec)); }
                 } else if (t0.equals("TARGET")) {
                     targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.TARGET;
+                } else if (t0.equals("FRIEND_LIST")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.FRIEND_LIST;
+                } else if (t0.equals("IGNORE_LIST")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.IGNORE_LIST;
+                } else if (t0.equals("PARTY_MEMBERS")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.PARTY_MEMBERS;
+                } else if (t0.equals("FRIENDS_CHAT")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.FRIENDS_CHAT;
+                } else if (t0.equals("TEAM_MEMBERS")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.TEAM_MEMBERS;
+                } else if (t0.equals("CLAN_MEMBERS")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.CLAN_MEMBERS;
+                } else if (t0.equals("OTHERS")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.OTHERS;
                 }
             }
         }
@@ -111,7 +125,7 @@ public class TickTriggerService {
 
     private void upsertPersistentOverheadText(KPWebhookPreset rule, String text, String position, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts) {
         if (text == null || text.isBlank()) return;
-        // Target parsing: [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET] <message>
+        // Target parsing: [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS] <message>
         String working = text;
         KPWebhookPlugin.ActiveOverheadText.TargetType targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.LOCAL_PLAYER;
         java.util.Set<String> targetNames = null; java.util.Set<Integer> targetIds = null;
@@ -126,7 +140,13 @@ public class TickTriggerService {
                 if (spec.matches("\\d+")) { targetType= KPWebhookPlugin.ActiveOverheadText.TargetType.NPC_ID; targetIds=new java.util.HashSet<>(); try { targetIds.add(Integer.parseInt(spec)); } catch(Exception ignored){} }
                 else { targetType= KPWebhookPlugin.ActiveOverheadText.TargetType.NPC_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeName(spec)); }
                 working = working.substring(toks[0].length()+1+toks[1].length()).trim();
-            }
+            } else if (t0.equals("FRIEND_LIST")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.FRIEND_LIST; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("IGNORE_LIST")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.IGNORE_LIST; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("PARTY_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.PARTY_MEMBERS; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("FRIENDS_CHAT")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.FRIENDS_CHAT; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("TEAM_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.TEAM_MEMBERS; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("CLAN_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.CLAN_MEMBERS; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("OTHERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.OTHERS; working = working.substring(toks[0].length()).trim(); }
         }
         if (working.isEmpty()) return;
         // Build deterministic identity components for de-dup

@@ -32,7 +32,7 @@ public class HighlightCommandHandler {
         else if (P_MINIMAP.matcher(upper).find()) type = HighlightType.MINIMAP;
         if (type == null) return false;
 
-        // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>|TARGET]
+        // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS]
         String remainder = line.contains(" ") ? line.substring(line.indexOf(' ')+1).trim() : "";
         ActiveHighlight.TargetType targetType = ActiveHighlight.TargetType.LOCAL_PLAYER;
         Set<String> targetNames = null;
@@ -60,6 +60,20 @@ public class HighlightCommandHandler {
                     }
                 } else if (t0.equals("TARGET")) {
                     targetType = ActiveHighlight.TargetType.TARGET;
+                } else if (t0.equals("FRIEND_LIST")) {
+                    targetType = ActiveHighlight.TargetType.FRIEND_LIST;
+                } else if (t0.equals("IGNORE_LIST")) {
+                    targetType = ActiveHighlight.TargetType.IGNORE_LIST;
+                } else if (t0.equals("PARTY_MEMBERS")) {
+                    targetType = ActiveHighlight.TargetType.PARTY_MEMBERS;
+                } else if (t0.equals("FRIENDS_CHAT")) {
+                    targetType = ActiveHighlight.TargetType.FRIENDS_CHAT;
+                } else if (t0.equals("TEAM_MEMBERS")) {
+                    targetType = ActiveHighlight.TargetType.TEAM_MEMBERS;
+                } else if (t0.equals("CLAN_MEMBERS")) {
+                    targetType = ActiveHighlight.TargetType.CLAN_MEMBERS;
+                } else if (t0.equals("OTHERS")) {
+                    targetType = ActiveHighlight.TargetType.OTHERS;
                 }
             }
         }

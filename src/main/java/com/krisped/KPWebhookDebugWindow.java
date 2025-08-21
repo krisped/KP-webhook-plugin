@@ -5,6 +5,8 @@ import net.runelite.api.AnimationID; // added
 import net.runelite.api.GraphicID; // added
 import net.runelite.api.Projectile; // new
 import net.runelite.api.Actor; // new
+import net.runelite.api.Player; // new
+import net.runelite.api.NPC; // new
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -34,6 +36,7 @@ public class KPWebhookDebugWindow extends JFrame {
             "ANIMATION_ANY","ANIMATION_SELF","ANIMATION_TARGET",
             "GRAPHIC_ANY","GRAPHIC_SELF","GRAPHIC_TARGET",
             "HITSPLAT_SELF","HITSPLAT_TARGET",
+            // removed IDLE
             "MANUAL", // new
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
             "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
@@ -178,7 +181,10 @@ public class KPWebhookDebugWindow extends JFrame {
         // Show player name in Name, raw message in Desc
         logRow("MESSAGE", typeId>=0?String.valueOf(typeId):"", type.name(), nz(player), nz(raw));
     }
-    public void logPlayerSpawn(boolean despawn, String name, int combat, int localCombat) { int diff = combat - localCombat; String diffStr = (diff==0?"=": (diff>0?"+"+diff: String.valueOf(diff))); logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", combat>0?String.valueOf(combat):"", "PLAYER", nz(name), diffStr); }
+    public void logPlayerSpawn(boolean despawn, String name, int combat, int localCombat) { /* Changed: show CB <combat> instead of +/- diff */
+        String desc = combat>0? ("CB "+combat):""; // new format
+        logRow(despawn?"PLAYER_DESPAWN":"PLAYER_SPAWN", combat>0?String.valueOf(combat):"", "PLAYER", nz(name), desc);
+    }
     public void logWidget(int groupId, Integer childId) { logRow("WIDGET", childId==null?String.valueOf(groupId):groupId+":"+childId, "WIDGET", "", ""); }
     public void logVarbit(int id, int value) { logRow("VARBIT", String.valueOf(id), String.valueOf(value), "", ""); }
     public void logVarplayer(int id, int value) { logRow("VARPLAYER", String.valueOf(id), String.valueOf(value), "", ""); }
@@ -188,18 +194,36 @@ public class KPWebhookDebugWindow extends JFrame {
     }
     public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name)+(npcId>0?" ("+npcId+")":""), combat>0?"cb="+combat:""); }
     public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", self?"PLAYER":"NPC", nz(actorName), "dmg="+amount); }
+    // New overload including Actor reference and target flag
+    public void logHitsplat(Actor actor, boolean self, boolean isTarget, int amount){
+        String name=""; String type=""; if(actor instanceof Player){ type="PLAYER"; try{ name=((Player)actor).getName(); }catch(Exception ignored){} } else if(actor instanceof NPC){ type="NPC"; try{ NPC n=(NPC)actor; name=n.getName(); if(name!=null) name=name+" ("+n.getId()+")"; }catch(Exception ignored){} }
+        // Only log TARGET hitsplats for current target; skip non-self, non-target actors
+        if(self){
+            logRow("HITSPLAT_SELF", "", type, nz(name), "dmg="+amount);
+        } else if(isTarget){
+            logRow("HITSPLAT_TARGET", "", type, nz(name), "dmg="+amount);
+        } // else skip
+    }
     public void logAnimation(boolean self, boolean target, int animId) {
         String trig = self? (target?"ANIMATION_ANY":"ANIMATION_SELF") : (target?"ANIMATION_TARGET":"ANIMATION_ANY");
         if (!self && !target) trig = "ANIMATION_ANY";
         logRow(trig, String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "", animDesc(animId));
         if (!"ANIMATION_ANY".equals(trig)) logRow("ANIMATION_ANY", String.valueOf(animId), self?"PLAYER":(target?"NPC":""), "", animDesc(animId));
     }
+    // New overload with Actor including name/id
+    public void logAnimation(Actor actor, boolean self, boolean target, int animId){
+        String type = actor instanceof Player?"PLAYER": actor instanceof NPC?"NPC":""; String name=""; if(actor instanceof Player){ try{name=((Player)actor).getName();}catch(Exception ignored){} } else if(actor instanceof NPC){ try{ NPC n=(NPC)actor; name=n.getName(); if(name!=null) name=name+" ("+n.getId()+")"; }catch(Exception ignored){} }
+        String trig = self? (target?"ANIMATION_ANY":"ANIMATION_SELF") : (target?"ANIMATION_TARGET":"ANIMATION_ANY"); if(!self && !target) trig="ANIMATION_ANY"; logRow(trig, String.valueOf(animId), type, nz(name), animDesc(animId)); if(!"ANIMATION_ANY".equals(trig)) logRow("ANIMATION_ANY", String.valueOf(animId), type, nz(name), animDesc(animId)); }
     public void logGraphic(boolean self, boolean target, int graphicId) {
         String trig = self? (target?"GRAPHIC_ANY":"GRAPHIC_SELF") : (target?"GRAPHIC_TARGET":"GRAPHIC_ANY");
         if (!self && !target) trig = "GRAPHIC_ANY";
         logRow(trig, String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "", graphicDesc(graphicId));
         if (!"GRAPHIC_ANY".equals(trig)) logRow("GRAPHIC_ANY", String.valueOf(graphicId), self?"PLAYER":(target?"NPC":""), "", graphicDesc(graphicId));
     }
+    // New overload with Actor including name/id
+    public void logGraphic(Actor actor, boolean self, boolean target, int graphicId){
+        String type = actor instanceof Player?"PLAYER": actor instanceof NPC?"NPC":""; String name=""; if(actor instanceof Player){ try{name=((Player)actor).getName();}catch(Exception ignored){} } else if(actor instanceof NPC){ try{ NPC n=(NPC)actor; name=n.getName(); if(name!=null) name=name+" ("+n.getId()+")"; }catch(Exception ignored){} }
+        String trig = self? (target?"GRAPHIC_ANY":"GRAPHIC_SELF") : (target?"GRAPHIC_TARGET":"GRAPHIC_ANY"); if(!self && !target) trig="GRAPHIC_ANY"; logRow(trig, String.valueOf(graphicId), type, nz(name), graphicDesc(graphicId)); if(!"GRAPHIC_ANY".equals(trig)) logRow("GRAPHIC_ANY", String.valueOf(graphicId), type, nz(name), graphicDesc(graphicId)); }
     public void logProjectile(String trigger, Projectile p, Actor target) { // new
         if (p == null) return;
         String tgtType = ""; String tgtName = "";

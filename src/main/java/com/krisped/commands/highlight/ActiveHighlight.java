@@ -18,7 +18,7 @@ public class ActiveHighlight {
     private Integer ruleId; // source rule for persistence (TICK trigger)
     private boolean persistent; // if true, manager refreshes instead of normal decay
     // Targeting
-    public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET } // added TARGET
+    public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS }
     private TargetType targetType; // null => LOCAL_PLAYER fallback
     private Set<String> targetNames; // lowercase names (players or npcs)
     private Set<Integer> targetIds; // npc ids

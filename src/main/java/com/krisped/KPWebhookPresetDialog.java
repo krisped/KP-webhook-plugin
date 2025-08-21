@@ -66,18 +66,14 @@ public class KPWebhookPresetDialog extends JDialog
     private JPanel hitsplatCard; // new
     private JComboBox<String> hitsplatModeBox; // new
     private JSpinner hitsplatValueSpinner; // new
-    // Message trigger components
-    private JPanel messageCard;
-    private JSpinner messageIdSpinner; // now only ID spinner
-    private JTextField messageTextField; // NEW: text pattern field
-    // Varbit trigger components
-    private JPanel varbitCard;
-    private JTextField varbitIdsField; // multi-id text field (replaces spinner)
-    private JSpinner varbitValueSpinner;
-    // Varplayer trigger components
-    private JPanel varplayerCard;
-    private JTextField varplayerIdsField; // multi-id text field
-    private JSpinner varplayerValueSpinner;
+    // Idle trigger components
+    private JPanel idleCard; private JSpinner idleMsSpinner; // new idle trigger
+    // Message trigger components (added)
+    private JPanel messageCard; private JSpinner messageIdSpinner; private JTextField messageTextField;
+    // Varbit trigger components (added)
+    private JPanel varbitCard; private JTextField varbitIdsField; private JSpinner varbitValueSpinner;
+    // Varplayer trigger components (added)
+    private JPanel varplayerCard; private JTextField varplayerIdsField; private JSpinner varplayerValueSpinner;
     // Webhook components
     private JCheckBox useDefaultWebhookBox;
     private JTextField customWebhookField;
@@ -133,7 +129,7 @@ public class KPWebhookPresetDialog extends JDialog
             "#  TOGGLEPRESET <title> <1|0> - Activate/deactivate preset by exact title (1=on)\n" +
             "#  TOGGLEGROUP <category> <1|0> - Activate/deactivate all presets in category (1=on)\n" +
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
-            "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id>\n" +
+            "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id> | FRIEND_LIST | IGNORE_LIST | PARTY_MEMBERS | FRIENDS_CHAT | TEAM_MEMBERS | CLAN_MEMBERS | OTHERS\n" +
             "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
             "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}} $HITSPLAT_SELF $HITSPLAT_TARGET\n" +
             "\n" +
@@ -401,7 +397,7 @@ public class KPWebhookPresetDialog extends JDialog
         infoPane.setEditable(false);
         infoPane.setOpaque(false);
         infoPane.setFont(FontManager.getRunescapeFont().deriveFont(12f)); // use RuneScape font
-        infoPane.setText(buildInfoHtml());
+        infoPane.setText(KPWebhookInfoContent.buildHtml());
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4,4));
         toolbar.setOpaque(false);
@@ -429,174 +425,10 @@ public class KPWebhookPresetDialog extends JDialog
         html = html.replaceAll("<br ?/?>","\n").replaceAll("<li>"," - ").replaceAll("</li>","\n")
                 .replaceAll("<[^>]+>","").replaceAll("&nbsp;"," ").replaceAll("&lt;","<")
                 .replaceAll("&gt;",">").replaceAll("&amp;","&");
-        // Remove extra spaces/tabs/newlines
         html = html.replaceAll("[\\s]+", " ").trim();
         return html;
     }
 
-    private String buildInfoHtml() {
-        // Build skill token list (alphabetical)
-        java.util.List<String> skillList = new java.util.ArrayList<>();
-        for (Skill s : Skill.values()) skillList.add(s.name());
-        java.util.Collections.sort(skillList, String.CASE_INSENSITIVE_ORDER);
-        String skillTokens = String.join(", ", skillList);
-
-        // Trigger descriptions (will sort alphabetically)
-        java.util.Map<String,String> triggerDesc = new java.util.HashMap<>();
-        triggerDesc.put("ANIMATION_ANY","Any player/NPC animation id match");
-        triggerDesc.put("ANIMATION_SELF","Local player animation id match");
-        triggerDesc.put("ANIMATION_TARGET","Current target animation id match");
-        triggerDesc.put("GRAPHIC_ANY","Any player/NPC graphic");
-        triggerDesc.put("GRAPHIC_SELF","Local player graphic (spot anim)");
-        triggerDesc.put("GRAPHIC_TARGET","Current target graphic");
-        triggerDesc.put("HITSPLAT_SELF","Hitsplat on you passes comparison");
-        triggerDesc.put("HITSPLAT_TARGET","Hitsplat on target passes comparison");
-        triggerDesc.put("MESSAGE","Chat message filter (reserved)");
-        triggerDesc.put("MANUAL","Manual execution only");
-        triggerDesc.put("NPC_DESPAWN","NPC despawn (id/name list)");
-        triggerDesc.put("NPC_SPAWN","NPC spawn (id/name list)");
-        triggerDesc.put("PLAYER_DESPAWN","Player leaves scene");
-        triggerDesc.put("PLAYER_SPAWN","Player enters scene (filters)");
-        triggerDesc.put("PROJECTILE_ANY","Any projectile id in list (or all)");
-        triggerDesc.put("PROJECTILE_SELF","Projectile towards current target");
-        triggerDesc.put("PROJECTILE_TARGET","Projectile towards you");
-        triggerDesc.put("STAT","Skill LEVEL_UP / ABOVE / BELOW");
-        triggerDesc.put("TARGET","Target acquired/lost");
-        triggerDesc.put("TICK","Every game tick (600ms)");
-        triggerDesc.put("VARBIT","Varbit id equals value");
-        triggerDesc.put("VARPLAYER","Varplayer id equals value");
-        triggerDesc.put("WIDGET","Widget group[:child] loaded");
-        java.util.List<String> trigKeys = new java.util.ArrayList<>(triggerDesc.keySet());
-        java.util.Collections.sort(trigKeys, String.CASE_INSENSITIVE_ORDER);
-        StringBuilder trigList = new StringBuilder();
-        trigList.append("<div class='section'>");
-        for (String k : trigKeys) trigList.append(entryLine(k, triggerDesc.get(k)));
-        trigList.append("</div>");
-
-        // Command descriptions (alphabetical)
-        java.util.Map<String,String> cmdMap = new java.util.HashMap<>();
-        cmdMap.put("CUSTOM_MESSAGE <type|id> <text>", "Chat line with explicit ChatMessageType or numeric id");
-        cmdMap.put("HIGHLIGHT_HULL [target]", "Convex hull highlight");
-        cmdMap.put("HIGHLIGHT_MINIMAP [target]", "Minimap marker");
-        cmdMap.put("HIGHLIGHT_OUTLINE [target]", "Outline entity (0 ticks = persistent)");
-        cmdMap.put("HIGHLIGHT_SCREEN [target]", "Screen border / pulse");
-        cmdMap.put("HIGHLIGHT_TILE [target]", "Tile highlight");
-        cmdMap.put("IMG_CENTER [target] <id>", "Centered overhead image");
-        cmdMap.put("IMG_OVER [target] <id>", "Image above (item id or -sprite)");
-        cmdMap.put("IMG_UNDER [target] <id>", "Image under-feet");
-        cmdMap.put("INFOBOX <id> [label]", "Info box icon (ticks)");
-        cmdMap.put("NOTIFY <text>", "RuneLite + chat notification");
-        cmdMap.put("OVERLAY_TEXT <text>", "HUD overlay box");
-        cmdMap.put("SCREENSHOT [text]", "Capture & send (optional caption)");
-        cmdMap.put("SLEEP <ms>", "Real time delay");
-        cmdMap.put("STOP", "Stop all visuals & sequences");
-        cmdMap.put("STOP_RULE [id]", "Stop visuals for one rule");
-        cmdMap.put("TEXT_CENTER [target] <text>", "Centered text");
-        cmdMap.put("TEXT_OVER [target] <text>", "Text above");
-        cmdMap.put("TEXT_UNDER [target] <text>", "Text under-feet");
-        cmdMap.put("TICK [n]", "Delay n game ticks (default 1)");
-        cmdMap.put("TOGGLEPRESET <title> <1|0>", "Activate (1) or deactivate (0) preset by exact title");
-        cmdMap.put("TOGGLEGROUP <category> <1|0>", "Activate/deactivate all presets in category");
-        cmdMap.put("WEBHOOK <text>", "Send plain content to webhook");
-        java.util.List<String> cmdKeys = new java.util.ArrayList<>(cmdMap.keySet());
-        java.util.Collections.sort(cmdKeys, String.CASE_INSENSITIVE_ORDER);
-        StringBuilder cmdList = new StringBuilder();
-        cmdList.append("<div class='section'>");
-        for (String k : cmdKeys) cmdList.append(entryLine(k, cmdMap.get(k)));
-        cmdList.append("</div>");
-
-        // Tokens (alphabetical)
-        java.util.Map<String,String> tokenMap = new java.util.HashMap<>();
-        tokenMap.put("$HITSPLAT","Latest hitsplat amount (self or target)");
-        tokenMap.put("$HITSPLAT_SELF","Latest hitsplat on you");
-        tokenMap.put("$HITSPLAT_TARGET","Latest hitsplat on target");
-        tokenMap.put("${CURRENT_STAT}", "Boosted value of trigger skill");
-        tokenMap.put("${STAT}", "Real level of trigger skill");
-        tokenMap.put("${TARGET}", "Current target name");
-        tokenMap.put("${current}", "Current boosted level (stat trigger)");
-        tokenMap.put("${npcId}", "Matched NPC id");
-        tokenMap.put("${npcName}", "Matched NPC name");
-        tokenMap.put("${otherCombat}", "Other player combat level");
-        tokenMap.put("${otherPlayer}", "Other player name");
-        tokenMap.put("${player}", "Local player name");
-        tokenMap.put("${time}", "ISO timestamp");
-        tokenMap.put("${value}", "Threshold value (stat/var/hitsplat)");
-        tokenMap.put("${widgetChild}", "Widget child id");
-        tokenMap.put("${widgetGroup}", "Widget group id");
-        tokenMap.put("${WORLD}", "World number");
-        // Skill token note
-        tokenMap.put("Skill tokens", "Each skill: $SKILL (real), $CURRENT_SKILL (boosted)");
-        java.util.List<String> tokenKeys = new java.util.ArrayList<>(tokenMap.keySet());
-        java.util.Collections.sort(tokenKeys, String.CASE_INSENSITIVE_ORDER);
-        StringBuilder tokenList = new StringBuilder(); tokenList.append("<div class='section'>");
-        for (String k : tokenKeys) tokenList.append(entryLine(k, tokenMap.get(k)));
-        tokenList.append("<div class='dim' style='margin-top:4px'>Placeholders also accept {{NAME}} or $NAME legacy forms.</div>");
-        tokenList.append("</div>");
-
-        String examples = "<pre># Example preset script\n" +
-                "NOTIFY Target engaged: $TARGET\n" +
-                "HIGHLIGHT_OUTLINE TARGET\n" +
-                "TEXT_OVER TARGET $TARGET *\n" +
-                "TICK 3\n" +
-                "CUSTOM_MESSAGE PM_TO Finishing $TARGET soon...\n" +
-                "SLEEP 1200\n" +
-                "SCREENSHOT BossPhase\n" +
-                "STOP_RULE\n" +
-                "</pre>";
-
-        String chatTypes = "<div class='section'><b>Chat Types:</b> Enum name, aliases (SYSTEMMESSAGE, PM_FROM, PM_TO, GAME_MSG, etc.) or numeric forms (7, ID:7, TYPE_7). Fallback = GAMEMESSAGE.</div>";
-        String targeting = "<div class='section'><b>Targeting:</b> LOCAL_PLAYER | PLAYER &lt;name&gt; | NPC &lt;name|id&gt; | TARGET. Omit = LOCAL_PLAYER.</div>";
-        String sequencing = "<div class='section'><b>Sequencing:</b> SLEEP = ms delay, TICK = game tick delay, commands run sequentially until a delay. STOP/STOP_RULE clear visuals.</div>";
-        String persistence = "<div class='section'><b>Persistence:</b> HIGHLIGHT_*, TEXT_*, IMG_*: duration 0 = persistent until STOP/STOP_RULE. INFOBOX counts down ticks.</div>";
-
-        String css = "<style>"+
-                "body{font-family:'RuneScape',Runescape,'Segoe UI',sans-serif;font-size:11px;color:#E2E2E2;line-height:1.42;margin:4px;}"+
-                "b{color:#F5F5F5;}"+
-                "code{background:#202225;padding:1px 4px;border-radius:3px;border:1px solid #2d3034;color:#EEE;font-size:11px;font-family:monospace;}"+
-                "pre{background:#151618;border:1px solid #2a2d30;padding:6px;border-radius:4px;overflow:auto;font-size:11px;color:#E0E0E0;}"+
-                ".section{margin:4px 0 10px 0;}"+
-                ".entry{margin:1px 0;} .entry code{margin-right:6px;}"+
-                ".dim{color:#9aa0ac;font-size:10px;}"+
-                "</style>";
-
-        return "<html><head>"+css+"</head><body>"+
-                "<h2>Triggers</h2>"+trigList+
-                "<h2>Commands</h2>"+cmdList+
-                "<h2>Tokens</h2>"+tokenList+
-                sequencing +
-                persistence +
-                targeting +
-                chatTypes +
-                "<h2>Skills</h2><div class='section'>"+escapeHtml(skillTokens)+"</div>"+
-                "<h2>Example</h2>"+examples+
-                "</body></html>";
-    }
-
-    private String entryLine(String key, String desc){ return "<div class='entry'><code>"+escapeHtml(key)+"</code>"+escapeHtml(desc)+"</div>"; }
-
-    // Added back missing HTML escape helper
-    private static String escapeHtml(String s){
-        if (s == null) return "";
-        String out = s.replace("&","&amp;")
-                .replace("<","&lt;")
-                .replace(">","&gt;");
-        return out;
-    }
-
-    private JPanel buildButtons()
-    {
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8,8));
-        JButton helpBtn = new JButton("Help");
-        JButton saveBtn = new JButton("Save");
-        JButton cancelBtn = new JButton("Cancel");
-        helpBtn.addActionListener(e -> showHelp());
-        saveBtn.addActionListener(e -> onSave());
-        cancelBtn.addActionListener(e -> { result = null; dispose(); });
-        buttons.add(helpBtn);
-        buttons.add(saveBtn);
-        buttons.add(cancelBtn);
-        return buttons;
-    }
 
     /* ================= Populate ================= */
     private void populate(KPWebhookPreset r)
@@ -756,6 +588,9 @@ public class KPWebhookPresetDialog extends JDialog
                 if (npcListField!=null) npcListField.setText(r.getNpcConfig().getRawList()!=null? r.getNpcConfig().getRawList():"");
             }
         }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.IDLE && r.getIdleConfig()!=null) {
+            idleMsSpinner.setValue(r.getIdleConfig().getThresholdMs());
+        }
     }
 
     /* ================= Save ================= */
@@ -782,6 +617,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.VarplayerConfig varplayerCfg = null;
         KPWebhookPreset.NpcConfig npcCfg = null; // new
         KPWebhookPreset.ProjectileConfig projectileCfg = null; // new
+        KPWebhookPreset.IdleConfig idleCfg = null; // new
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -926,6 +762,11 @@ public class KPWebhookPresetDialog extends JDialog
             if ((npcCfg.getNpcIds()==null || npcCfg.getNpcIds().isEmpty()) && (npcCfg.getNpcNames()==null || npcCfg.getNpcNames().isEmpty())) {
                 JOptionPane.showMessageDialog(this, "NPC list invalid (no valid ids or names)"); return; }
         }
+        else if (trig == KPWebhookPreset.TriggerType.IDLE) {
+            int ms = (Integer) idleMsSpinner.getValue();
+            if (ms < 0) { JOptionPane.showMessageDialog(this, "Idle ms must be >= 0"); return; }
+            idleCfg = KPWebhookPreset.IdleConfig.builder().thresholdMs(ms).build();
+        }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
         String custom = customWebhookField.getText(); if (custom == null) custom = "";
@@ -1011,7 +852,8 @@ public class KPWebhookPresetDialog extends JDialog
                 .varbitConfig(varbitCfg)
                 .varplayerConfig(varplayerCfg)
                 .hitsplatConfig(hitsplatCfg)
-                .projectileConfig(projectileCfg);
+                .projectileConfig(projectileCfg)
+                .idleConfig(idleCfg);
 
         result = b.build();
         dispose();
@@ -1060,6 +902,7 @@ public class KPWebhookPresetDialog extends JDialog
         else if (sel.startsWith("PROJECTILE_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (sel.startsWith("ANIMATION_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (sel.startsWith("GRAPHIC_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
+        else if (KPWebhookPreset.TriggerType.IDLE.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.IDLE.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else {
             String cardKey = sel;
             if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
@@ -1199,6 +1042,8 @@ public class KPWebhookPresetDialog extends JDialog
         varplayerCard = new JPanel(new GridBagLayout()); GridBagConstraints vp = new GridBagConstraints(); vp.insets=new Insets(4,4,4,4); vp.fill=GridBagConstraints.HORIZONTAL; vp.anchor=GridBagConstraints.WEST; vp.weightx=1; int vpy=0; vp.gridx=0; vp.gridy=vpy; varplayerCard.add(new JLabel("Varplayer IDs"), vp); varplayerIdsField=new JTextField(); vp.gridx=1; varplayerCard.add(varplayerIdsField,vp); vpy++; vp.gridx=0; vp.gridy=vpy; varplayerCard.add(new JLabel("Value"), vp); varplayerValueSpinner=new JSpinner(new SpinnerNumberModel(0,0,255,1)); vp.gridx=1; varplayerCard.add(varplayerValueSpinner,vp);
         // NPC
         npcCard = new JPanel(new GridBagLayout()); GridBagConstraints nc = new GridBagConstraints(); nc.insets=new Insets(4,4,4,4); nc.fill=GridBagConstraints.HORIZONTAL; nc.anchor=GridBagConstraints.WEST; nc.weightx=1; int ncy=0; nc.gridx=0; nc.gridy=ncy; npcCard.add(new JLabel("NPC list"), nc); npcListField=new JTextField(); nc.gridx=1; npcCard.add(npcListField,nc);
+        // IDLE
+        idleCard = new JPanel(new GridBagLayout()); GridBagConstraints ic = new GridBagConstraints(); ic.insets=new Insets(4,4,4,4); ic.fill=GridBagConstraints.HORIZONTAL; ic.anchor=GridBagConstraints.WEST; ic.weightx=1; int icy=0; ic.gridx=0; ic.gridy=icy; idleCard.add(new JLabel("Idle ms"), ic); idleMsSpinner=new JSpinner(new SpinnerNumberModel(0,0,600000,100)); ic.gridx=1; idleCard.add(idleMsSpinner, ic);
         // NONE placeholder
         cards.add(new JPanel(), "NONE");
         cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
@@ -1214,6 +1059,7 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
         cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
         cards.add(npcCard, "NPC");
+        cards.add(idleCard, KPWebhookPreset.TriggerType.IDLE.name());
         return cards;
     }
 
@@ -1225,4 +1071,19 @@ public class KPWebhookPresetDialog extends JDialog
     }
 
     private abstract static class SimpleDoc implements javax.swing.event.DocumentListener { protected abstract void changed(); public void insertUpdate(javax.swing.event.DocumentEvent e){changed();} public void removeUpdate(javax.swing.event.DocumentEvent e){changed();} public void changedUpdate(javax.swing.event.DocumentEvent e){changed();} }
+
+    private JPanel buildButtons()
+    {
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8,8));
+        JButton helpBtn = new JButton("Help");
+        JButton saveBtn = new JButton("Save");
+        JButton cancelBtn = new JButton("Cancel");
+        helpBtn.addActionListener(e -> showHelp());
+        saveBtn.addActionListener(e -> onSave());
+        cancelBtn.addActionListener(e -> { result = null; dispose(); });
+        buttons.add(helpBtn);
+        buttons.add(saveBtn);
+        buttons.add(cancelBtn);
+        return buttons;
+    }
 }

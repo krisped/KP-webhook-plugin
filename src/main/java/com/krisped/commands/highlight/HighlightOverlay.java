@@ -13,6 +13,9 @@ import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.outline.ModelOutlineRenderer;
+import net.runelite.client.util.Text;
+import net.runelite.client.party.PartyService;
+import net.runelite.client.party.PartyMember;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -22,6 +25,8 @@ import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.HashSet;
 
 /** Overlay responsible for rendering active highlights and overhead texts. */
 @Singleton
@@ -30,16 +35,19 @@ public class HighlightOverlay extends Overlay {
     private final Client client;
     private final ModelOutlineRenderer modelOutlineRenderer;
     private final HighlightManager highlightManager;
+    private final PartyService partyService; // optional, may be null in some contexts
 
     @Inject
     public HighlightOverlay(KPWebhookPlugin plugin,
                             Client client,
                             ModelOutlineRenderer modelOutlineRenderer,
-                            HighlightManager highlightManager) {
+                            HighlightManager highlightManager,
+                            PartyService partyService) { // added partyService
         this.plugin = plugin;
         this.client = client;
         this.modelOutlineRenderer = modelOutlineRenderer;
         this.highlightManager = highlightManager;
+        this.partyService = partyService;
         setPosition(OverlayPosition.DYNAMIC);
         // Draw BELOW widgets so bank / UI panels are above highlights
         setLayer(OverlayLayer.UNDER_WIDGETS);
@@ -87,6 +95,62 @@ public class HighlightOverlay extends Overlay {
                     } else if (currentTarget instanceof NPC) {
                         renderHighlightFor(graphics, h, (NPC)currentTarget);
                     }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.FRIEND_LIST) {
+                    for (Player p : players) {
+                        if (p==null || p==local || p.getName()==null) continue; // skip local player explicitly
+                        try {
+                            String raw = p.getName();
+                            if (client.isFriended(raw, false) || client.isFriended(normalizePlayer(raw), false)) {
+                                renderHighlightFor(graphics, h, p);
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.IGNORE_LIST) {
+                    for (Player p : players) {
+                        if (p==null || p==local || p.getName()==null) continue;
+                        try {
+                            String raw = p.getName();
+                            if (isIgnoredPlayer(raw) || isIgnoredPlayer(normalizePlayer(raw))) {
+                                renderHighlightFor(graphics, h, p);
+                            }
+                        } catch (Throwable ignored) { }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.PARTY_MEMBERS) {
+                    for (Player p : players) {
+                        if (p==null || p==local) continue;
+                        if (isPartyMember(p)) {
+                            renderHighlightFor(graphics, h, p);
+                        }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.FRIENDS_CHAT) {
+                    for (Player p : players) {
+                        if (p==null || p==local) continue;
+                        if (isFriendsChatMember(p)) {
+                            renderHighlightFor(graphics, h, p);
+                        }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.TEAM_MEMBERS) {
+                    int myTeam = safeTeam(local);
+                    if (myTeam > 0) {
+                        for (Player p : players) {
+                            if (p==null || p==local) continue;
+                            if (safeTeam(p) == myTeam) {
+                                renderHighlightFor(graphics, h, p);
+                            }
+                        }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.CLAN_MEMBERS) {
+                    for (Player p : players) {
+                        if (p==null || p==local) continue;
+                        if (isClanMember(p)) {
+                            renderHighlightFor(graphics, h, p);
+                        }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.OTHERS) {
+                    for (Player p : players) {
+                        if (p==null || p==local) continue;
+                        renderHighlightFor(graphics, h, p);
+                    }
                 }
             }
         }
@@ -119,6 +183,20 @@ public class HighlightOverlay extends Overlay {
                 } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.TARGET) {
                     if (currentTarget instanceof Player) drawTextOverEntity(graphics, (Player)currentTarget, aot);
                     else if (currentTarget instanceof NPC) drawTextOverEntity(graphics, (NPC)currentTarget, aot);
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.FRIEND_LIST) {
+                    for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; try { String raw=p.getName(); if(client.isFriended(raw,false) || client.isFriended(normalizePlayer(raw),false)) drawTextOverEntity(graphics,p,aot);}catch(Exception ignored){} }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.IGNORE_LIST) {
+                    for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; try { String raw=p.getName(); if(isIgnoredPlayer(raw) || isIgnoredPlayer(normalizePlayer(raw))) drawTextOverEntity(graphics,p,aot);}catch(Exception ignored){} }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.PARTY_MEMBERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isPartyMember(p)) drawTextOverEntity(graphics,p,aot); }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.FRIENDS_CHAT) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isFriendsChatMember(p)) drawTextOverEntity(graphics,p,aot); }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.TEAM_MEMBERS) {
+                    int myTeam=safeTeam(local); if(myTeam>0){ for(Player p: players){ if(p==null||p==local) continue; if(safeTeam(p)==myTeam) drawTextOverEntity(graphics,p,aot);} }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.CLAN_MEMBERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isClanMember(p)) drawTextOverEntity(graphics,p,aot); }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.OTHERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; drawTextOverEntity(graphics,p,aot); }
                 }
             }
         }
@@ -150,6 +228,20 @@ public class HighlightOverlay extends Overlay {
                 } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.TARGET) {
                     if (currentTarget instanceof Player) drawImageOverEntity(graphics, (Player)currentTarget, oi);
                     else if (currentTarget instanceof NPC) drawImageOverEntity(graphics, (NPC)currentTarget, oi);
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.FRIEND_LIST) {
+                    for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; try { String raw=p.getName(); if(client.isFriended(raw,false) || client.isFriended(normalizePlayer(raw),false)) drawImageOverEntity(graphics,p,oi);}catch(Exception ignored){} }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.IGNORE_LIST) {
+                    for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; try { String raw=p.getName(); if(isIgnoredPlayer(raw) || isIgnoredPlayer(normalizePlayer(raw))) drawImageOverEntity(graphics,p,oi);}catch(Exception ignored){} }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.PARTY_MEMBERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isPartyMember(p)) drawImageOverEntity(graphics,p,oi); }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.FRIENDS_CHAT) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isFriendsChatMember(p)) drawImageOverEntity(graphics,p,oi); }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.TEAM_MEMBERS) {
+                    int myTeam=safeTeam(local); if(myTeam>0){ for(Player p: players){ if(p==null||p==local) continue; if(safeTeam(p)==myTeam) drawImageOverEntity(graphics,p,oi);} }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.CLAN_MEMBERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; if(isClanMember(p)) drawImageOverEntity(graphics,p,oi); }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.OTHERS) {
+                    for(Player p: players){ if(p==null||p==local) continue; drawImageOverEntity(graphics,p,oi); }
                 }
             }
         }
@@ -191,6 +283,108 @@ public class HighlightOverlay extends Overlay {
             graphics.setFont(oldFont);
         }
         return null;
+    }
+
+    private boolean isIgnoredPlayer(String name){
+        if(name==null || name.isBlank()) return false;
+        String key = sanitizeName(name).toLowerCase();
+        ensureIgnoreCache();
+        return ignoreNamesLower.contains(key);
+    }
+
+    private String normalizePlayer(String n){
+        if(n==null) return "";
+        try { return Text.removeTags(n).replace('\u00A0',' ').replace('_',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').replace('_',' ').trim(); }
+    }
+
+    private String sanitizeName(String n){
+        if(n==null) return "";
+        try { return Text.removeTags(n).replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); }
+    }
+
+    // Ignore name cache (lowercase sanitized)
+    private Set<String> ignoreNamesLower = new HashSet<>();
+    private long ignoreNamesBuiltAt = 0L;
+    private static final long IGNORE_CACHE_MS = 4000L;
+    private static final boolean IGNORE_DEBUG = false; // set true for logging
+
+    private void ensureIgnoreCache(){
+        long now = System.currentTimeMillis();
+        if(now - ignoreNamesBuiltAt < IGNORE_CACHE_MS && !ignoreNamesLower.isEmpty()) return;
+        ignoreNamesBuiltAt = now;
+        Set<String> out = new HashSet<>();
+        // Primary: client.getIgnoreContainer().getIgnores()
+        try {
+            Object cont = callNoArg(client, "getIgnoreContainer");
+            if(cont != null){
+                Object ignoresArr = callNoArg(cont, "getIgnores");
+                if(ignoresArr != null){
+                    collectAny(ignoresArr, out);
+                }
+                // Some versions might have getNameables
+                collectFromContainer(cont, out);
+            }
+        } catch(Exception ignored){}
+        // Direct client.getIgnores()/getIgnored()/getIgnoreList()
+        try { Object list = callNoArg(client, "getIgnores"); collectAny(list, out);} catch(Exception ignored){}
+        try { Object list2 = callNoArg(client, "getIgnored"); collectAny(list2, out);} catch(Exception ignored){}
+        try { Object list3 = callNoArg(client, "getIgnoreList"); collectAny(list3, out);} catch(Exception ignored){}
+        // Heuristic fallback: scan methods containing "ignore"
+        if(out.isEmpty()){
+            Method[] ms = client.getClass().getMethods();
+            for(Method m: ms){
+                try {
+                    String n = m.getName().toLowerCase();
+                    if(!n.contains("ignore")) continue;
+                    if(m.getParameterCount()!=0) continue;
+                    if(m.getReturnType()==Void.TYPE) continue;
+                    Object val = m.invoke(client);
+                    collectAny(val, out);
+                } catch(Exception ignored){}
+            }
+        }
+        if(IGNORE_DEBUG){
+            try { System.out.println("[KPWebhook IGNORE] collected=" + out); } catch(Exception ignored){}
+        }
+        ignoreNamesLower = out; // atomic swap
+    }
+
+    private Object callNoArg(Object target, String method){
+        if(target==null) return null;
+        try { Method m = target.getClass().getMethod(method); return m.invoke(target); } catch(Exception e){ return null; }
+    }
+    private void collectFromContainer(Object container, Set<String> out){
+        if(container==null) return;
+        try { Object col = callNoArg(container, "getNameables"); if(col!=null){ collectAny(col, out);} } catch(Exception ignored){}
+        try { Object col2 = callNoArg(container, "getMembers"); if(col2!=null){ collectAny(col2, out);} } catch(Exception ignored){}
+        collectAny(container, out);
+    }
+    private void collectAny(Object obj, Set<String> out){
+        if(obj==null) return;
+        if(obj instanceof Collection){
+            Collection coll = (Collection)obj;
+            for(Object o: coll){ extractNameable(o, out);}
+            return;
+        }
+        if(obj.getClass().isArray()){
+            int len = java.lang.reflect.Array.getLength(obj);
+            for(int i=0;i<len;i++){
+                Object o = java.lang.reflect.Array.get(obj,i);
+                extractNameable(o,out);
+            }
+            return;
+        }
+        // Single entry maybe
+        extractNameable(obj, out);
+    }
+    private void extractNameable(Object entry, Set<String> out){
+        if(entry==null) return;
+        try { Method m = entry.getClass().getMethod("getName"); Object n = m.invoke(entry); if(n instanceof String){ addIgnoreName((String)n,out);} } catch(Exception ignored){}
+        try { Method m2 = entry.getClass().getMethod("getPrevName"); Object n2 = m2.invoke(entry); if(n2 instanceof String){ addIgnoreName((String)n2,out);} } catch(Exception ignored){}
+        try { Method m3 = entry.getClass().getMethod("getDisplayName"); Object n3 = m3.invoke(entry); if(n3 instanceof String){ addIgnoreName((String)n3,out);} } catch(Exception ignored){}
+    }
+    private void addIgnoreName(String s, Set<String> out){
+        if(s==null) return; String norm = sanitizeName(s).toLowerCase(); if(!norm.isEmpty()) out.add(norm);
     }
 
     private void renderHighlightFor(Graphics2D graphics, ActiveHighlight h, Player p) {
@@ -389,5 +583,80 @@ public class HighlightOverlay extends Overlay {
             }
         } catch (Exception ignored) {}
         try { return client.getNpcs(); } catch (Exception e) { return Collections.emptyList(); }
+    }
+
+    private void collectIgnoreNames(Object source, java.util.Set<String> out){
+        if(source == null) return;
+        try {
+            if(source instanceof java.util.Collection){
+                for(Object o: (java.util.Collection<?>)source){ extractIgnoreName(o, out); }
+                return;
+            }
+            // Try getNameables()
+            try {
+                java.lang.reflect.Method gn = source.getClass().getMethod("getNameables");
+                Object col = gn.invoke(source);
+                if(col instanceof java.util.Collection){
+                    for(Object o: (java.util.Collection<?>)col){ extractIgnoreName(o, out); }
+                    return;
+                }
+            } catch (NoSuchMethodException ignored) { }
+            // Try to treat it as array
+            if(source.getClass().isArray()){
+                int len = java.lang.reflect.Array.getLength(source);
+                for(int i=0;i<len;i++){ Object o = java.lang.reflect.Array.get(source,i); extractIgnoreName(o,out);} return;
+            }
+        } catch(Exception ignored) { }
+    }
+
+    private void extractIgnoreName(Object entry, java.util.Set<String> out){
+        if(entry==null) return;
+        try {
+            // Primary: getName()
+            try {
+                java.lang.reflect.Method gn = entry.getClass().getMethod("getName");
+                Object nObj = gn.invoke(entry);
+                if(nObj instanceof String){ String norm = sanitizeName((String)nObj).toLowerCase(); if(!norm.isEmpty()) out.add(norm); }
+            } catch (NoSuchMethodException ignored) { }
+            // Previous name maybe
+            try {
+                java.lang.reflect.Method gp = entry.getClass().getMethod("getPrevName");
+                Object nObj = gp.invoke(entry);
+                if(nObj instanceof String){ String norm = sanitizeName((String)nObj).toLowerCase(); if(!norm.isEmpty()) out.add(norm); }
+            } catch (NoSuchMethodException ignored) { }
+        } catch (Exception ignored) {}
+    }
+
+    private boolean isPartyMember(Player p){
+        if(p==null) return false;
+        try {
+            if(partyService == null) return false;
+            String pn = sanitizeName(p.getName()).toLowerCase();
+            for(PartyMember m : partyService.getMembers()){
+                if(m==null) continue;
+                String mn = sanitizeName(m.getDisplayName()).toLowerCase();
+                if(!mn.isEmpty() && mn.equals(pn)) return true;
+            }
+        } catch(Exception ignored){}
+        return false;
+    }
+    private boolean isFriendsChatMember(Player p){
+        if(p==null) return false;
+        try { return p.isFriendsChatMember(); } catch(Throwable ignored){}
+        // Reflection fallback
+        try { java.lang.reflect.Method m = p.getClass().getMethod("isFriendsChatMember"); Object r = m.invoke(p); if(r instanceof Boolean) return (Boolean)r; } catch(Exception ignored){}
+        return false;
+    }
+    private boolean isClanMember(Player p){
+        if(p==null) return false;
+        try { return p.isClanMember(); } catch(Throwable ignored){}
+        try { java.lang.reflect.Method m = p.getClass().getMethod("isClanMember"); Object r = m.invoke(p); if(r instanceof Boolean) return (Boolean)r; } catch(Exception ignored){}
+        return false;
+    }
+    private int safeTeam(Player p){
+        if(p==null) return -1;
+        try { return p.getTeam(); } catch(Throwable ignored){}
+        try { java.lang.reflect.Method m = p.getClass().getMethod("getTeam"); Object r = m.invoke(p); if(r instanceof Integer) return (Integer)r; } catch(Exception ignored){}
+        return -1;
     }
 }
