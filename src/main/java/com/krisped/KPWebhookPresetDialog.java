@@ -41,6 +41,8 @@ public class KPWebhookPresetDialog extends JDialog
     private JComboBox<KPWebhookPreset.StatMode> statModeBox;
     private JSpinner levelSpinner;
     private JPanel levelHolderCard;
+    // XP DROP card components
+    private JPanel xpDropCard; private JComboBox<String> xpSkillBox; private JComboBox<KPWebhookPreset.StatMode> xpModeBox; private JSpinner xpValueSpinner;
     private static final String LEVEL_CARD_VISIBLE = "LEVEL";
     private static final String LEVEL_CARD_EMPTY   = "EMPTY";
     private static final String SKILL_PLACEHOLDER  = "-- Skill --";
@@ -83,6 +85,12 @@ public class KPWebhookPresetDialog extends JDialog
     private JPanel triggerDetailsPanel;
     private JPanel npcCard; // new NPC trigger card
     private JTextField npcListField; // raw list field
+    // Gear trigger components
+    private JPanel gearCard; private JTextField gearField; // new gear card
+    // Region trigger components
+    private JPanel regionCard; private JTextField regionIdsField; // new region card
+    // Inventory trigger components
+    private JPanel inventoryCard; private JTextField inventoryField; // new inventory card
 
     /* -------- Settings Tab (kategorier) -------- */
     private JPanel settingsRoot;
@@ -476,6 +484,11 @@ public class KPWebhookPresetDialog extends JDialog
                 levelSpinner.setValue(r.getStatConfig().getThreshold());
             updateStatEnable();
         }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.XP_DROP && r.getXpConfig()!=null){
+            xpSkillBox.setSelectedItem(r.getXpConfig().getSkill().name());
+            xpModeBox.setSelectedItem(r.getXpConfig().getMode());
+            xpValueSpinner.setValue(r.getXpConfig().getXpThreshold());
+        }
         if (r.getTriggerType()== KPWebhookPreset.TriggerType.WIDGET_SPAWN && r.getWidgetConfig()!=null)
         {
             if (r.getWidgetConfig().getChildId()!=null)
@@ -591,6 +604,25 @@ public class KPWebhookPresetDialog extends JDialog
         if (r.getTriggerType()== KPWebhookPreset.TriggerType.IDLE && r.getIdleConfig()!=null) {
             idleMsSpinner.setValue(r.getIdleConfig().getThresholdMs());
         }
+        if ((r.getTriggerType()== KPWebhookPreset.TriggerType.GEAR_CHANGED || r.getTriggerType()== KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED) && r.getGearConfig()!=null){
+            KPWebhookPreset.GearConfig gc = r.getGearConfig();
+            java.util.List<String> parts = new java.util.ArrayList<>();
+            if(gc.getItemIds()!=null) for(Integer i: gc.getItemIds()) if(i!=null) parts.add(String.valueOf(i));
+            if(gc.getNames()!=null) parts.addAll(gc.getNames());
+            if(gc.getWildcards()!=null) parts.addAll(gc.getWildcards());
+            if(gearField!=null) gearField.setText(String.join(",", parts));
+        }
+        if (r.getTriggerType()== KPWebhookPreset.TriggerType.REGION && r.getRegionConfig()!=null) {
+            if(regionIdsField!=null) regionIdsField.setText(listToString(r.getRegionConfig().getRegionIds()));
+        }
+        if ((r.getTriggerType()== KPWebhookPreset.TriggerType.INVENTORY_FULL || r.getTriggerType()== KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || r.getTriggerType()== KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE) && r.getInventoryConfig()!=null){
+            KPWebhookPreset.InventoryConfig icfg = r.getInventoryConfig();
+            java.util.List<String> parts = new java.util.ArrayList<>();
+            if(icfg.getItemIds()!=null) for(Integer i: icfg.getItemIds()) if(i!=null) parts.add(String.valueOf(i));
+            if(icfg.getNames()!=null) parts.addAll(icfg.getNames());
+            if(icfg.getWildcards()!=null) parts.addAll(icfg.getWildcards());
+            if(inventoryField!=null) inventoryField.setText(String.join(",", parts));
+        }
     }
 
     /* ================= Save ================= */
@@ -618,6 +650,10 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.NpcConfig npcCfg = null; // new
         KPWebhookPreset.ProjectileConfig projectileCfg = null; // new
         KPWebhookPreset.IdleConfig idleCfg = null; // new
+        KPWebhookPreset.GearConfig gearCfg = null; // new
+        KPWebhookPreset.RegionConfig regionCfg = null; // new region config
+        KPWebhookPreset.InventoryConfig inventoryCfg = null; // new inventory config
+        KPWebhookPreset.XpConfig xpCfg = null; // new xp drop config
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -633,6 +669,15 @@ public class KPWebhookPresetDialog extends JDialog
                     .mode(mode)
                     .threshold(threshold)
                     .build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.XP_DROP)
+        {
+            String skillSel = (String) xpSkillBox.getSelectedItem();
+            if (skillSel == null || SKILL_PLACEHOLDER.equals(skillSel)) { JOptionPane.showMessageDialog(this, "Select a skill."); return; }
+            KPWebhookPreset.StatMode mode = (KPWebhookPreset.StatMode) xpModeBox.getSelectedItem();
+            if (mode == null || mode== KPWebhookPreset.StatMode.LEVEL_UP) { JOptionPane.showMessageDialog(this, "Select ABOVE eller BELOW."); return; }
+            int xpThr = (Integer) xpValueSpinner.getValue();
+            xpCfg = KPWebhookPreset.XpConfig.builder().skill(Skill.valueOf(skillSel)).mode(mode).xpThreshold(xpThr).build();
         }
         else if (trig == KPWebhookPreset.TriggerType.WIDGET_SPAWN)
         {
@@ -767,6 +812,23 @@ public class KPWebhookPresetDialog extends JDialog
             if (ms < 0) { JOptionPane.showMessageDialog(this, "Idle ms must be >= 0"); return; }
             idleCfg = KPWebhookPreset.IdleConfig.builder().thresholdMs(ms).build();
         }
+        else if (trig == KPWebhookPreset.TriggerType.GEAR_CHANGED || trig == KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED) {
+            String raw = gearField!=null? gearField.getText().trim():"";
+            gearCfg = parseGearInput(raw); // may be empty (match any change)
+        }
+        else if (trig == KPWebhookPreset.TriggerType.REGION) {
+            String raw = regionIdsField!=null? regionIdsField.getText().trim():"";
+            java.util.List<Integer> ids = parseIntList(raw);
+            if (ids.isEmpty()) { JOptionPane.showMessageDialog(this, "Region ID(s) required"); return; }
+            regionCfg = KPWebhookPreset.RegionConfig.builder().regionIds(ids).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.INVENTORY_FULL || trig == KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || trig == KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE) {
+            String raw = inventoryField!=null? inventoryField.getText().trim():"";
+            inventoryCfg = parseInventoryInput(raw);
+            if(trig== KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || trig== KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE){
+                if(inventoryCfg==null){ JOptionPane.showMessageDialog(this, "Liste over item id/navn eller wildcard kreves for dette inventory-triggeret"); return; }
+            }
+        }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
         String custom = customWebhookField.getText(); if (custom == null) custom = "";
@@ -854,6 +916,10 @@ public class KPWebhookPresetDialog extends JDialog
                 .hitsplatConfig(hitsplatCfg)
                 .projectileConfig(projectileCfg)
                 .idleConfig(idleCfg);
+        if(gearCfg!=null || trig== KPWebhookPreset.TriggerType.GEAR_CHANGED || trig== KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED) b.gearConfig(gearCfg); // include even if null for clarity
+        if(regionCfg!=null || trig== KPWebhookPreset.TriggerType.REGION) b.regionConfig(regionCfg);
+        if(inventoryCfg!=null || trig== KPWebhookPreset.TriggerType.INVENTORY_FULL || trig== KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || trig== KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE) b.inventoryConfig(inventoryCfg);
+        if(xpCfg!=null || trig== KPWebhookPreset.TriggerType.XP_DROP) b.xpConfig(xpCfg);
 
         result = b.build();
         dispose();
@@ -903,7 +969,7 @@ public class KPWebhookPresetDialog extends JDialog
         else if (sel.startsWith("ANIMATION_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (sel.startsWith("GRAPHIC_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (KPWebhookPreset.TriggerType.IDLE.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.IDLE.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
-        else {
+        else if (KPWebhookPreset.TriggerType.GEAR_CHANGED.name().equals(sel) || KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.GEAR_CHANGED.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (KPWebhookPreset.TriggerType.REGION.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.REGION.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (sel.startsWith("INVENTORY_")) { cl.show(triggerCards, "INVENTORY"); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (KPWebhookPreset.TriggerType.XP_DROP.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.XP_DROP.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else {
             String cardKey = sel;
             if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
             cl.show(triggerCards, cardKey);
@@ -949,6 +1015,8 @@ public class KPWebhookPresetDialog extends JDialog
     private java.util.List<Integer> parseIntList(String raw){ java.util.List<Integer> list = new java.util.ArrayList<>(); if (raw==null || raw.isBlank()) return list; for (String p : raw.split("[;,\\s]+")) { if (p.isBlank()) continue; try { list.add(Integer.parseInt(p.trim())); } catch (Exception ignored) {} } return list; }
     private String listToString(java.util.List<Integer> list){ if (list==null || list.isEmpty()) return ""; StringBuilder sb=new StringBuilder(); for (int i=0;i<list.size();i++){ if (i>0) sb.append(','); sb.append(list.get(i)); } return sb.toString(); }
     private java.util.List<String> parseNameList(String raw){ java.util.List<String> out = new java.util.ArrayList<>(); if (raw==null||raw.isBlank()) return out; for (String p: raw.split(",")){ String t=p.trim(); if(!t.isEmpty()) out.add(t.toLowerCase(Locale.ROOT)); } return out; }
+    private KPWebhookPreset.GearConfig parseGearInput(String raw){ if(raw==null||raw.isBlank()) return null; java.util.List<Integer> ids=new java.util.ArrayList<>(); java.util.List<String> names=new java.util.ArrayList<>(); java.util.List<String> wild=new java.util.ArrayList<>(); for(String part: raw.split("[,;\n\r\t ]+")){ String t=part.trim(); if(t.isEmpty()) continue; String low=t.toLowerCase(Locale.ROOT); if(low.matches("\\d+")){ try { ids.add(Integer.parseInt(low)); } catch(Exception ignored){} } else if(low.contains("*")){ wild.add(low); } else { names.add(low); } } if(ids.isEmpty() && names.isEmpty() && wild.isEmpty()) return null; return KPWebhookPreset.GearConfig.builder().itemIds(ids.isEmpty()?null:ids).names(names.isEmpty()?null:names).wildcards(wild.isEmpty()?null:wild).build(); }
+    private KPWebhookPreset.InventoryConfig parseInventoryInput(String raw){ if(raw==null||raw.isBlank()) return null; java.util.List<Integer> ids=new java.util.ArrayList<>(); java.util.List<String> names=new java.util.ArrayList<>(); java.util.List<String> wild=new java.util.ArrayList<>(); for(String part: raw.split("[,;\n\r\t ]+")){ String t=part.trim(); if(t.isEmpty()) continue; String low=t.toLowerCase(Locale.ROOT); if(low.matches("\\d+")){ try { ids.add(Integer.parseInt(low)); } catch(Exception ignored){} } else if(low.contains("*")){ wild.add(low); } else { names.add(low); } } if(ids.isEmpty() && names.isEmpty() && wild.isEmpty()) return null; return KPWebhookPreset.InventoryConfig.builder().itemIds(ids.isEmpty()?null:ids).names(names.isEmpty()?null:names).wildcards(wild.isEmpty()?null:wild).build(); }
 
     /* -------- UI Panels (simplified restored versions) -------- */
     private static class HighlightCategoryPanel extends JPanel {
@@ -1044,22 +1112,35 @@ public class KPWebhookPresetDialog extends JDialog
         npcCard = new JPanel(new GridBagLayout()); GridBagConstraints nc = new GridBagConstraints(); nc.insets=new Insets(4,4,4,4); nc.fill=GridBagConstraints.HORIZONTAL; nc.anchor=GridBagConstraints.WEST; nc.weightx=1; int ncy=0; nc.gridx=0; nc.gridy=ncy; npcCard.add(new JLabel("NPC list"), nc); npcListField=new JTextField(); nc.gridx=1; npcCard.add(npcListField,nc);
         // IDLE
         idleCard = new JPanel(new GridBagLayout()); GridBagConstraints ic = new GridBagConstraints(); ic.insets=new Insets(4,4,4,4); ic.fill=GridBagConstraints.HORIZONTAL; ic.anchor=GridBagConstraints.WEST; ic.weightx=1; int icy=0; ic.gridx=0; ic.gridy=icy; idleCard.add(new JLabel("Idle ms"), ic); idleMsSpinner=new JSpinner(new SpinnerNumberModel(0,0,600000,100)); ic.gridx=1; idleCard.add(idleMsSpinner, ic);
+        // GEAR
+        gearCard = new JPanel(new GridBagLayout()); GridBagConstraints gcg = new GridBagConstraints(); gcg.insets=new Insets(4,4,4,4); gcg.fill=GridBagConstraints.HORIZONTAL; gcg.anchor=GridBagConstraints.WEST; gcg.weightx=1; int gcy=0; gcg.gridx=0; gcg.gridy=gcy; gcg.gridwidth=2; JLabel gearInfo=new JLabel("Kommaseparert: itemId, eksakt navn, delnavn eller *wildcard*. Tom = alle endringer"); gearCard.add(gearInfo,gcg); gcg.gridwidth=1; gcy++; gcg.gridx=0; gcg.gridy=gcy; gearCard.add(new JLabel("Filter"), gcg); gearField=new JTextField(); gearField.setToolTipText("Kommaseparert: itemId, navn eller *wildcard* (f.eks *bow*). Tom = alle endringer"); gcg.gridx=1; gearCard.add(gearField,gcg);
+        // REGION
+        regionCard = new JPanel(new GridBagLayout()); GridBagConstraints rg = new GridBagConstraints(); rg.insets=new Insets(4,4,4,4); rg.fill=GridBagConstraints.HORIZONTAL; rg.anchor=GridBagConstraints.WEST; rg.weightx=1; int rgy=0; rg.gridx=0; rg.gridy=rgy; regionCard.add(new JLabel("Region IDs"), rg); regionIdsField=new JTextField(); regionIdsField.setToolTipText("Kommaseparerte region IDs (64x64). Utled fra debug eller wiki."); rg.gridx=1; regionCard.add(regionIdsField, rg);
+        // INVENTORY
+        inventoryCard = new JPanel(new GridBagLayout()); GridBagConstraints icv = new GridBagConstraints(); icv.insets=new Insets(4,4,4,4); icv.fill=GridBagConstraints.HORIZONTAL; icv.anchor=GridBagConstraints.WEST; icv.weightx=1; int ivy=0; icv.gridx=0; icv.gridy=ivy; inventoryCard.add(new JLabel("Item filter"), icv); inventoryField=new JTextField(); inventoryField.setToolTipText("Kommaseparert: itemId, eksakt navn, delnavn eller *wildcard*. Tom: alle (kun for FULL / ITEM_ADDED)"); icv.gridx=1; inventoryCard.add(inventoryField, icv);
         // NONE placeholder
         cards.add(new JPanel(), "NONE");
         cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
+        // XP_DROP card
+        xpDropCard = new JPanel(new GridBagLayout()); GridBagConstraints xd = new GridBagConstraints(); xd.insets=new Insets(4,4,4,4); xd.fill=GridBagConstraints.HORIZONTAL; xd.anchor=GridBagConstraints.WEST; xd.weightx=1; int xdy=0; xd.gridx=0; xd.gridy=xdy; xpDropCard.add(new JLabel("Skill"), xd); java.util.List<String> xpSkills=new java.util.ArrayList<>(); xpSkills.add(SKILL_PLACEHOLDER); for(Skill s: Skill.values()) xpSkills.add(s.name()); java.util.Collections.sort(xpSkills.subList(1,xpSkills.size()), String.CASE_INSENSITIVE_ORDER); xpSkillBox=new JComboBox<>(xpSkills.toArray(new String[0])); xd.gridx=1; xpDropCard.add(xpSkillBox, xd); xdy++; xd.gridx=0; xd.gridy=xdy; xpDropCard.add(new JLabel("Mode"), xd); xpModeBox=new JComboBox<>(new KPWebhookPreset.StatMode[]{KPWebhookPreset.StatMode.ABOVE, KPWebhookPreset.StatMode.BELOW}); xd.gridx=1; xpDropCard.add(xpModeBox, xd); xdy++; xd.gridx=0; xd.gridy=xdy; xpDropCard.add(new JLabel("XP"), xd); xpValueSpinner=new JSpinner(new SpinnerNumberModel(1,1,200000000,100)); xd.gridx=1; xpDropCard.add(xpValueSpinner, xd);
+        cards.add(xpDropCard, KPWebhookPreset.TriggerType.XP_DROP.name());
+
+        // Added missing cards for other trigger types so their detail inputs appear
         cards.add(widgetCard, KPWebhookPreset.TriggerType.WIDGET_SPAWN.name());
-        cards.add(playerCard, "PLAYER");
-        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_SELF.name());
-        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name());
-        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_SELF.name());
-        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name());
-        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name());
-        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name());
+        cards.add(playerCard, "PLAYER"); // shared for PLAYER_SPAWN / PLAYER_DESPAWN
+        cards.add(npcCard, "NPC"); // shared for NPC_SPAWN / NPC_DESPAWN
+        cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); // used for SELF/TARGET/ANY
+        cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); // used for SELF/TARGET/ANY
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name()); // used for SELF/TARGET/ANY
+        cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name()); // used for SELF/TARGET
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());
         cards.add(varplayerCard, KPWebhookPreset.TriggerType.VARPLAYER.name());
-        cards.add(npcCard, "NPC");
         cards.add(idleCard, KPWebhookPreset.TriggerType.IDLE.name());
+        cards.add(gearCard, KPWebhookPreset.TriggerType.GEAR_CHANGED.name()); // shared for TARGET_GEAR_CHANGED
+        cards.add(regionCard, KPWebhookPreset.TriggerType.REGION.name());
+        cards.add(inventoryCard, "INVENTORY"); // shared for inventory triggers
+
         return cards;
     }
 

@@ -40,6 +40,7 @@ public class KPWebhookDebugWindow extends JFrame {
             "MANUAL", // new
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
             "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
+            "REGION",
             "STAT","TARGET","TICK","VARBIT","VARPLAYER","WIDGET" // added TARGET & TICK
     };
     private final Set<String> selectedTriggers = new LinkedHashSet<>();

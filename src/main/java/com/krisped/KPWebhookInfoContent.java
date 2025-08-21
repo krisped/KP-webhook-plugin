@@ -46,7 +46,7 @@ public final class KPWebhookInfoContent {
         commands.put("HIGHLIGHT_TILE [target]", new Info("Coloured tile under the entity.", "HIGHLIGHT_TILE TARGET"));
         commands.put("IMG_CENTER [target] <id>", new Info("Centered overhead image (item id or -sprite id).", "IMG_CENTER TARGET 4151"));
         commands.put("IMG_OVER [target] <id>", new Info("Image above head (item id or -sprite id).", "IMG_OVER TARGET 11802"));
-        commands.put("IMG_UNDER [target] <id>", new Info("Image at feet (item id or -sprite id).", "IMG_UNDER TARGET 4151"));
+        commands.put("IMG_UNDER [target] <id>", new Info("Image at feet (item id or -sprite id).", "IMG_UNDER 4151"));
         commands.put("INFOBOX <id> [tooltip]", new Info("Shows an infobox with optional tooltip. Duration configured in settings.", "INFOBOX 4151 Whip drop!"));
         commands.put("MARK_TILE <color[:width]> <x,y[,plane]> [label]", new Info("Mark a specific world tile (auto-cleans after configured duration).", "MARK_TILE RED 3212,2884,0 Safespot"));
         commands.put("NOTIFY <text>", new Info("RuneLite + chat notification.", "NOTIFY Boss spawn!"));
@@ -74,6 +74,8 @@ public final class KPWebhookInfoContent {
         triggers.put("HITSPLAT_SELF", new Info("Hitsplat on you meets comparison.", "HITSPLAT_SELF >=10"));
         triggers.put("HITSPLAT_TARGET", new Info("Hitsplat on target meets comparison.", "HITSPLAT_TARGET >20"));
         triggers.put("IDLE", new Info("Local player idle for X ms.", "IDLE 5000"));
+        triggers.put("GEAR_CHANGED", new Info("Utstyr (gear) endres på deg. Valgfri filter-liste: itemId, eksakt navn, delnavn (substring) eller *wildcard*. 'bow' matcher f.eks. Magic shortbow uten *.", "GEAR_CHANGED bow"));
+        triggers.put("TARGET_GEAR_CHANGED", new Info("Utstyr endres på ditt target (spillere). Samme syntaks som GEAR_CHANGED (itemId, navn, delnavn eller *wildcard*).", "TARGET_GEAR_CHANGED bow"));
         triggers.put("MANUAL", new Info("Runs only manually (no automatic trigger).", "MANUAL"));
         triggers.put("MESSAGE", new Info("Chat message id / text match.", "MESSAGE You have been poisoned"));
         triggers.put("NPC_DESPAWN", new Info("NPC despawns (id / name list).", "NPC_DESPAWN 5867"));
@@ -83,12 +85,17 @@ public final class KPWebhookInfoContent {
         triggers.put("PROJECTILE_ANY", new Info("Projectile id in list (any direction).", "PROJECTILE_ANY 335"));
         triggers.put("PROJECTILE_SELF", new Info("Projectile towards you.", "PROJECTILE_SELF 335"));
         triggers.put("PROJECTILE_TARGET", new Info("Projectile from you to target OR from target to you (direction logic).", "PROJECTILE_TARGET 335"));
-        triggers.put("STAT", new Info("Skill ABOVE / BELOW / LEVEL_UP threshold.", "STAT ATTACK ABOVE 90"));
+        triggers.put("STAT", new Info("Skill ABOVE / BELOW / LEVEL_UP threshold (basert på ekte nivå).", "STAT ATTACK ABOVE 90"));
+        triggers.put("XP_DROP", new Info("XP total for valgt skill er OVER / UNDER terskel (trigges ved XP endring).", "XP_DROP FISHING ABOVE 1000000"));
         triggers.put("TARGET", new Info("Target acquired or lost.", "TARGET"));
         triggers.put("TICK", new Info("Every game tick.", "TICK"));
         triggers.put("VARBIT", new Info("Varbit id == value.", "VARBIT 1234 7"));
         triggers.put("VARPLAYER", new Info("Varplayer id == value.", "VARPLAYER 281 1"));
         triggers.put("WIDGET_SPAWN", new Info("Widget group[:child] loaded.", "WIDGET_SPAWN 593 5"));
+        triggers.put("REGION", new Info("Local player enters region id (64x64 world area). Fires once per entry unless force-cancel toggled.", "REGION 12850"));
+        triggers.put("INVENTORY_FULL", new Info("Inventory blir fullt. Valgfri filter-liste begrenser til om minst ett av oppførte items er i inv når den blir full (id, navn, substring eller *wildcard*).", "INVENTORY_FULL ore"));
+        triggers.put("INVENTORY_ITEM_ADDED", new Info("Item lagt til i inventory matcher filter (id, navn, substring eller *wildcard*).", "INVENTORY_ITEM_ADDED 2351"));
+        triggers.put("INVENTORY_CONTAINS_NONE", new Info("Inventory inneholder ingen av oppførte items (id/navn/substr/wildcard). Force-cancel = trigges så lenge det er sant.", "INVENTORY_CONTAINS_NONE food*"));
 
         // TOKENS (token -> Info)
         Map<String, Info> tokens = new HashMap<>();
@@ -163,18 +170,6 @@ public final class KPWebhookInfoContent {
                 "</div></body></html>";
     }
 
-    private static String entry(String k, Info info){
-        StringBuilder sb = new StringBuilder();
-        sb.append("<div class='entry'>");
-        sb.append("<div class='name'><code>").append(esc(k)).append("</code></div>");
-        if(info != null){
-            if(info.desc != null) sb.append("<div class='desc'>").append(esc(info.desc)).append("</div>");
-            if(info.example != null && !info.example.isEmpty())
-                sb.append("<div class='ex'>Example: <code>").append(esc(info.example)).append("</code></div>");
-        }
-        sb.append("</div>");
-        return sb.toString();
-    }
-
+    private static String entry(String name, Info info){ if(info==null) return ""; StringBuilder sb=new StringBuilder(); sb.append("<div class='entry'>"); sb.append("<div class='name'><code>").append(esc(name)).append("</code></div>"); if(info.desc!=null) sb.append("<div class='desc'>").append(esc(info.desc)).append("</div>"); if(info.example!=null) sb.append("<div class='ex'><code>").append(esc(info.example)).append("</code></div>"); sb.append("</div>"); return sb.toString(); }
     private static String esc(String s){ if(s==null) return ""; return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
 }

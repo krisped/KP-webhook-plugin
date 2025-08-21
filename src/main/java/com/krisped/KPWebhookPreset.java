@@ -35,7 +35,17 @@ public class KPWebhookPreset
         PROJECTILE_SELF, // new
         PROJECTILE_TARGET, // new
         PROJECTILE_ANY, // new
-        IDLE // newly added idle trigger
+        IDLE, // newly added idle trigger
+        GEAR_CHANGED, // new: local player equipment changed
+        TARGET_GEAR_CHANGED, // new: target player equipment changed
+        REGION, // new: region enter trigger
+        INVENTORY_FULL, // new: inventory becomes full (optionally filtered)
+        INVENTORY_ITEM_ADDED, // new: matching item added to inventory
+        INVENTORY_CONTAINS_NONE, // new: inventory contains none of listed items
+        INVENTORY_ITEM_REMOVED, // new: matching item removed from inventory
+        DEATH, // new: local player death
+        LOOT_DROP, // new: ground item spawn matching filter
+        XP_DROP // new: experience changed threshold (above/below total XP)
     }
 
     public enum StatMode
@@ -182,6 +192,64 @@ public class KPWebhookPreset
         private int thresholdMs = 0; // default 0: trigger as soon as client considers player idle
     }
 
+    // New gear config
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class GearConfig {
+        private java.util.List<Integer> itemIds; // numeric ids
+        private java.util.List<String> names; // exact lowercase names
+        private java.util.List<String> wildcards; // lowercase patterns possibly containing *
+    }
+
+    // New region config
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class RegionConfig {
+        private java.util.List<Integer> regionIds; // list of region ids (64x64 areas)
+    }
+
+    // New inventory filter config
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class InventoryConfig {
+        private java.util.List<Integer> itemIds; // numeric ids
+        private java.util.List<String> names; // exact lowercase names / substrings
+        private java.util.List<String> wildcards; // patterns containing *
+    }
+
+    // New loot config
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class LootConfig {
+        private java.util.List<Integer> itemIds;
+        private java.util.List<String> names;
+        private java.util.List<String> wildcards;
+    }
+
+    // New XP config
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class XpConfig {
+        private Skill skill; // skill to watch
+        private StatMode mode; // ABOVE / BELOW (LEVEL_UP ignored here)
+        private int xpThreshold; // total XP threshold
+    }
+
     @Builder.Default
     private int id = -1;
 
@@ -200,6 +268,11 @@ public class KPWebhookPreset
     private NpcConfig npcConfig; // new optional npc config
     private ProjectileConfig projectileConfig; // new projectile config
     private IdleConfig idleConfig; // new idle config
+    private GearConfig gearConfig; // new gear config
+    private RegionConfig regionConfig; // new region trigger config
+    private InventoryConfig inventoryConfig; // new inventory trigger config
+    private LootConfig lootConfig; // new loot drop trigger config
+    private XpConfig xpConfig; // new xp drop trigger config
 
     private String webhookUrl;
     @Builder.Default
@@ -462,6 +535,70 @@ public class KPWebhookPreset
                 return vp;
             case IDLE:
                 return idleConfig!=null? ("IDLE "+ idleConfig.getThresholdMs()+"ms") : "IDLE ?";
+            case GEAR_CHANGED:
+                if(gearConfig==null) return "GEAR_CHANGED"; {
+                    String b="GEAR_CHANGED";
+                    if(gearConfig.getItemIds()!=null && !gearConfig.getItemIds().isEmpty()) b+=" "+shortJoin(gearConfig.getItemIds());
+                    else if(gearConfig.getNames()!=null && !gearConfig.getNames().isEmpty()) b+=" "+gearConfig.getNames().get(0)+ (gearConfig.getNames().size()>1?",...":"");
+                    else if(gearConfig.getWildcards()!=null && !gearConfig.getWildcards().isEmpty()) b+=" "+gearConfig.getWildcards().get(0);
+                    return b;
+                }
+            case TARGET_GEAR_CHANGED:
+                if(gearConfig==null) return "TARGET_GEAR_CHANGED"; {
+                    String b="TARGET_GEAR_CHANGED";
+                    if(gearConfig.getItemIds()!=null && !gearConfig.getItemIds().isEmpty()) b+=" "+shortJoin(gearConfig.getItemIds());
+                    else if(gearConfig.getNames()!=null && !gearConfig.getNames().isEmpty()) b+=" "+gearConfig.getNames().get(0)+ (gearConfig.getNames().size()>1?",...":"");
+                    else if(gearConfig.getWildcards()!=null && !gearConfig.getWildcards().isEmpty()) b+=" "+gearConfig.getWildcards().get(0);
+                    return b;
+                }
+            case REGION:
+                if(regionConfig==null || regionConfig.getRegionIds()==null || regionConfig.getRegionIds().isEmpty()) return "REGION ?";
+                return "REGION "+shortJoin(regionConfig.getRegionIds());
+            case INVENTORY_FULL:
+                if(inventoryConfig==null) return "INVENTORY_FULL"; {
+                    String b="INVENTORY_FULL";
+                    if(inventoryConfig.getItemIds()!=null && !inventoryConfig.getItemIds().isEmpty()) b+=" "+shortJoin(inventoryConfig.getItemIds());
+                    else if(inventoryConfig.getNames()!=null && !inventoryConfig.getNames().isEmpty()) b+=" "+inventoryConfig.getNames().get(0)+(inventoryConfig.getNames().size()>1?",...":"");
+                    else if(inventoryConfig.getWildcards()!=null && !inventoryConfig.getWildcards().isEmpty()) b+=" "+inventoryConfig.getWildcards().get(0);
+                    return b;
+                }
+            case INVENTORY_ITEM_ADDED:
+                if(inventoryConfig==null) return "INVENTORY_ITEM_ADDED"; {
+                    String b="INVENTORY_ITEM_ADDED";
+                    if(inventoryConfig.getItemIds()!=null && !inventoryConfig.getItemIds().isEmpty()) b+=" "+shortJoin(inventoryConfig.getItemIds());
+                    else if(inventoryConfig.getNames()!=null && !inventoryConfig.getNames().isEmpty()) b+=" "+inventoryConfig.getNames().get(0)+(inventoryConfig.getNames().size()>1?",...":"");
+                    else if(inventoryConfig.getWildcards()!=null && !inventoryConfig.getWildcards().isEmpty()) b+=" "+inventoryConfig.getWildcards().get(0);
+                    return b;
+                }
+            case INVENTORY_CONTAINS_NONE:
+                if(inventoryConfig==null) return "INVENTORY_CONTAINS_NONE ?"; {
+                    String b="INVENTORY_CONTAINS_NONE";
+                    if(inventoryConfig.getItemIds()!=null && !inventoryConfig.getItemIds().isEmpty()) b+=" "+shortJoin(inventoryConfig.getItemIds());
+                    else if(inventoryConfig.getNames()!=null && !inventoryConfig.getNames().isEmpty()) b+=" "+inventoryConfig.getNames().get(0)+(inventoryConfig.getNames().size()>1?",...":"");
+                    else if(inventoryConfig.getWildcards()!=null && !inventoryConfig.getWildcards().isEmpty()) b+=" "+inventoryConfig.getWildcards().get(0);
+                    return b;
+                }
+            case INVENTORY_ITEM_REMOVED:
+                if(inventoryConfig==null) return "INVENTORY_ITEM_REMOVED"; {
+                    String b="INVENTORY_ITEM_REMOVED";
+                    if(inventoryConfig.getItemIds()!=null && !inventoryConfig.getItemIds().isEmpty()) b+=" "+shortJoin(inventoryConfig.getItemIds());
+                    else if(inventoryConfig.getNames()!=null && !inventoryConfig.getNames().isEmpty()) b+=" "+inventoryConfig.getNames().get(0)+(inventoryConfig.getNames().size()>1?",...":"");
+                    else if(inventoryConfig.getWildcards()!=null && !inventoryConfig.getWildcards().isEmpty()) b+=" "+inventoryConfig.getWildcards().get(0);
+                    return b;
+                }
+            case DEATH:
+                return "DEATH";
+            case LOOT_DROP:
+                if(lootConfig==null) return "LOOT_DROP"; {
+                    String b="LOOT_DROP";
+                    if(lootConfig.getItemIds()!=null && !lootConfig.getItemIds().isEmpty()) b+=" "+shortJoin(lootConfig.getItemIds());
+                    else if(lootConfig.getNames()!=null && !lootConfig.getNames().isEmpty()) b+=" "+lootConfig.getNames().get(0)+(lootConfig.getNames().size()>1?",...":"");
+                    else if(lootConfig.getWildcards()!=null && !lootConfig.getWildcards().isEmpty()) b+=" "+lootConfig.getWildcards().get(0);
+                    return b;
+                }
+            case XP_DROP:
+                if(xpConfig==null || xpConfig.getSkill()==null) return "XP_DROP ?"; {
+                    String sym = xpConfig.getMode()==StatMode.BELOW?"<":">"; if(xpConfig.getMode()==StatMode.ABOVE) sym=">"; else if(xpConfig.getMode()==StatMode.BELOW) sym="<"; return "XP_DROP "+xpConfig.getSkill().name()+" "+sym+"= "+xpConfig.getXpThreshold(); }
             default: return "?";
         }
     }
@@ -474,30 +611,20 @@ public class KPWebhookPreset
             case EQUAL: return "=";
             case LESS_EQUAL: return "<=";
             case LESS: return "<";
+            case MAX: return "MAX";
+            default: return "?";
         }
-        return "?";
     }
-    private static String humanHitsplatMode(HitsplatConfig.Mode m) {
+    private static String humanHitsplatMode(HitsplatConfig.Mode m){
         if (m == null) return "";
-        switch (m) {
-            case LESS:
-            case LESS_EQUAL:
-                return "BELOW ";
-            case EQUAL:
-                return "= "; // legacy / rarely used
-            case MAX:
-                return "MAX ";
-            case GREATER:
-            case GREATER_EQUAL:
-            default:
-                return "ABOVE ";
-        }
+        if (m == HitsplatConfig.Mode.MAX) return "MAX ";
+        return modeSymbol(m);
     }
-
-    private static String shortJoin(java.util.List<Integer> ids) {
-        if (ids==null || ids.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (int i=0;i<ids.size();i++) { if (i>0) sb.append(','); if (sb.length()>24) { sb.append("..."); break; } sb.append(ids.get(i)); }
+    private static String shortJoin(java.util.List<Integer> list){
+        if(list==null || list.isEmpty()) return "";
+        int max=5; StringBuilder sb=new StringBuilder();
+        for(int i=0;i<list.size() && i<max;i++){ if(i>0) sb.append(','); sb.append(list.get(i)); }
+        if(list.size()>max) sb.append(",...");
         return sb.toString();
     }
 }
