@@ -34,6 +34,7 @@ public class KPWebhookDebugWindow extends JFrame {
     private static final String[] TRIGGERS = {
             // Alphabetical list (extended with projectile and new core triggers)
             "ANIMATION_ANY","ANIMATION_SELF","ANIMATION_TARGET",
+            "GEAR_CHANGED","TARGET_GEAR_CHANGED",
             "GRAPHIC_ANY","GRAPHIC_SELF","GRAPHIC_TARGET",
             "HITSPLAT_SELF","HITSPLAT_TARGET",
             // removed IDLE
@@ -253,6 +254,11 @@ public class KPWebhookDebugWindow extends JFrame {
         }
     }
     public void logTickRule(int ruleId, String title) { logRow("TICK", String.valueOf(ruleId), "", nz(title), ""); }
+    public void logGearChange(boolean target, int itemId, String itemName){
+        String name = itemName!=null? itemName:"";
+        String display = name.isEmpty()? ("("+itemId+")") : name + " ("+itemId+")";
+        logRow(target?"TARGET_GEAR_CHANGED":"GEAR_CHANGED", String.valueOf(itemId), "ITEM", display, "");
+    }
 
     private String build(String base, String detail) { return detail==null||detail.isBlank()? base : base+" "+detail; }
 
