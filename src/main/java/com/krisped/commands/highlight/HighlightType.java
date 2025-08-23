@@ -5,5 +5,6 @@ public enum HighlightType {
     TILE,
     HULL,
     MINIMAP,
+    LINE, // new line from local player to target entity
     SCREEN // new full screen border highlight
 }

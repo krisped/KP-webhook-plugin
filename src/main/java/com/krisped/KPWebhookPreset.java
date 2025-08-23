@@ -262,6 +262,22 @@ public class KPWebhookPreset
         private boolean onlyPvPOrWilderness = false; // only fire when in wilderness OR on a PvP world
         @Builder.Default
         private boolean onlyAttackable = false; // require other player to be attackable per combat range rules
+        @Builder.Default
+        private boolean enableNpc = false; // new: also fire when an NPC starts interacting with local
+    }
+    // New target filter config (similar to interacting)
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class TargetConfig {
+        @Builder.Default
+        private boolean onlyPvPOrWilderness = false;
+        @Builder.Default
+        private boolean onlyAttackable = false;
+        @Builder.Default
+        private boolean enableNpc = true; // default allow NPC targets
     }
     @Builder.Default
     private int id = -1;
@@ -287,6 +303,7 @@ public class KPWebhookPreset
     private LootConfig lootConfig; // new loot drop trigger config
     private XpConfig xpConfig; // new xp drop trigger config
     private InteractingConfig interactingConfig; // new interacting trigger config
+    private TargetConfig targetConfig; // new target filter config
 
     private String webhookUrl;
     @Builder.Default
@@ -452,7 +469,14 @@ public class KPWebhookPreset
         if (triggerType == null) return "?";
         switch (triggerType) {
             case MANUAL: return "Manual";
-            case TARGET: return "TICK (continuous)";
+            case TARGET:
+                // Show target filters similar to INTERACTING trigger
+                if(targetConfig==null) return "TARGET";
+                String tb = "TARGET";
+                if(targetConfig.isOnlyPvPOrWilderness()) tb += " PvP/Wild";
+                if(targetConfig.isOnlyAttackable()) tb += " Attackable";
+                if(!targetConfig.isEnableNpc()) tb += " PlayersOnly"; // indicate NPCs disabled
+                return tb;
             case TICK: return "TICK (continuous)";
             case STAT:
                 if (statConfig == null || statConfig.getSkill()==null) return "STAT ?";

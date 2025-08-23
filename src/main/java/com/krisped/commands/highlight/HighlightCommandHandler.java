@@ -13,6 +13,7 @@ public class HighlightCommandHandler {
     private static final Pattern P_TILE    = Pattern.compile("(?i)^HIGHLIGHT_TILE\\b");
     private static final Pattern P_HULL    = Pattern.compile("(?i)^HIGHLIGHT_HULL\\b");
     private static final Pattern P_MINIMAP = Pattern.compile("(?i)^HIGHLIGHT_MINIMAP\\b");
+    private static final Pattern P_LINE    = Pattern.compile("(?i)^HIGHLIGHT_LINE\\b");
 
     private final HighlightManager highlightManager;
 
@@ -30,6 +31,7 @@ public class HighlightCommandHandler {
         else if (P_TILE.matcher(upper).find()) type = HighlightType.TILE;
         else if (P_HULL.matcher(upper).find()) type = HighlightType.HULL;
         else if (P_MINIMAP.matcher(upper).find()) type = HighlightType.MINIMAP;
+        else if (P_LINE.matcher(upper).find()) type = HighlightType.LINE;
         if (type == null) return false;
 
         // Parse optional target syntax: HIGHLIGHT_X [LOCAL_PLAYER|PLAYER <name>|NPC <name-or-id>|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS]
@@ -74,6 +76,10 @@ public class HighlightCommandHandler {
                     targetType = ActiveHighlight.TargetType.CLAN_MEMBERS;
                 } else if (t0.equals("OTHERS")) {
                     targetType = ActiveHighlight.TargetType.OTHERS;
+                } else if (t0.equals("PLAYER_SPAWN")) {
+                    targetType = ActiveHighlight.TargetType.PLAYER_SPAWN;
+                } else if (t0.equals("INTERACTION")) {
+                    targetType = ActiveHighlight.TargetType.INTERACTION;
                 }
             }
         }
@@ -97,6 +103,7 @@ public class HighlightCommandHandler {
             case TILE: return safe(r.getHlTileDuration(),5);
             case HULL: return safe(r.getHlHullDuration(),5);
             case MINIMAP: return safe(r.getHlMinimapDuration(),5);
+            case LINE: return safe(r.getHlOutlineDuration(),5);
         }
         return 5;
     }
@@ -106,6 +113,7 @@ public class HighlightCommandHandler {
             case TILE: return safe(r.getHlTileWidth(),2);
             case HULL: return safe(r.getHlHullWidth(),2);
             case MINIMAP: return safe(r.getHlMinimapWidth(),2);
+            case LINE: return safe(r.getHlOutlineWidth(),2);
         }
         return 2;
     }
@@ -115,6 +123,7 @@ public class HighlightCommandHandler {
             case TILE: return r.getHlTileColor();
             case HULL: return r.getHlHullColor();
             case MINIMAP: return r.getHlMinimapColor();
+            case LINE: return r.getHlOutlineColor();
         }
         return "#FFFF00";
     }
@@ -124,6 +133,7 @@ public class HighlightCommandHandler {
             case TILE: return bool(r.getHlTileBlink());
             case HULL: return bool(r.getHlHullBlink());
             case MINIMAP: return bool(r.getHlMinimapBlink());
+            case LINE: return bool(r.getHlOutlineBlink());
         }
         return false;
     }

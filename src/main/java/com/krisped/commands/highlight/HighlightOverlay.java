@@ -2,6 +2,7 @@ package com.krisped.commands.highlight;
 
 import com.krisped.KPWebhookPlugin;
 import com.krisped.KPWebhookPlugin.ActiveOverheadImage;
+import com.krisped.commands.tokens.TokenService;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.NPC;
@@ -37,6 +38,7 @@ public class HighlightOverlay extends Overlay {
     private final HighlightManager highlightManager;
     private final PartyService partyService; // optional, may be null in some contexts
     private final MarkTileManager markTileManager; // new source for marked tiles
+    private final TokenService tokenService; // new for player spawn targeting
 
     @Inject
     public HighlightOverlay(KPWebhookPlugin plugin,
@@ -44,13 +46,15 @@ public class HighlightOverlay extends Overlay {
                             ModelOutlineRenderer modelOutlineRenderer,
                             HighlightManager highlightManager,
                             PartyService partyService,
-                            MarkTileManager markTileManager) { // added markTileManager
+                            MarkTileManager markTileManager,
+                            TokenService tokenService) { // added tokenService param
         this.plugin = plugin;
         this.client = client;
         this.modelOutlineRenderer = modelOutlineRenderer;
         this.highlightManager = highlightManager;
         this.partyService = partyService;
         this.markTileManager = markTileManager;
+        this.tokenService = tokenService;
         setPosition(OverlayPosition.DYNAMIC);
         // Draw BELOW widgets so bank / UI panels are above highlights
         setLayer(OverlayLayer.UNDER_WIDGETS);
@@ -154,6 +158,18 @@ public class HighlightOverlay extends Overlay {
                         if (p==null || p==local) continue;
                         renderHighlightFor(graphics, h, p);
                     }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.PLAYER_SPAWN) {
+                    Set<String> recent = tokenService!=null? tokenService.getRecentSpawnLowerNames(): Collections.emptySet();
+                    if(!recent.isEmpty()){
+                        for(Player p: players){ if(p==null||p.getName()==null||p==local) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(recent.contains(n)) renderHighlightFor(graphics,h,p); }
+                    }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.INTERACTION) { // new: highlight last interacting player
+                    if(tokenService!=null){
+                        String last = tokenService.getLastInteractionNameLower();
+                        if(last!=null && !last.isBlank()){
+                            for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { renderHighlightFor(graphics,h,p); break; } }
+                        }
+                    }
                 }
             }
         }
@@ -200,6 +216,11 @@ public class HighlightOverlay extends Overlay {
                     for(Player p: players){ if(p==null||p==local) continue; if(isClanMember(p)) drawTextOverEntity(graphics,p,aot); }
                 } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.OTHERS) {
                     for(Player p: players){ if(p==null||p==local) continue; drawTextOverEntity(graphics,p,aot); }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.PLAYER_SPAWN) {
+                    Set<String> recent = tokenService!=null? tokenService.getRecentSpawnLowerNames(): java.util.Collections.emptySet();
+                    if(!recent.isEmpty()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(recent.contains(n)) drawTextOverEntity(graphics,p,aot); }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.INTERACTION) { // new: overhead text on last interacting player
+                    if(tokenService!=null){ String last=tokenService.getLastInteractionNameLower(); if(last!=null && !last.isBlank()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { drawTextOverEntity(graphics,p,aot); break; } } }
                 }
             }
         }
@@ -245,6 +266,11 @@ public class HighlightOverlay extends Overlay {
                     for(Player p: players){ if(p==null||p==local) continue; if(isClanMember(p)) drawImageOverEntity(graphics,p,oi); }
                 } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.OTHERS) {
                     for(Player p: players){ if(p==null||p==local) continue; drawImageOverEntity(graphics,p,oi); }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.PLAYER_SPAWN) {
+                    Set<String> recent = tokenService!=null? tokenService.getRecentSpawnLowerNames(): java.util.Collections.emptySet();
+                    if(!recent.isEmpty()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(recent.contains(n)) drawImageOverEntity(graphics,p,oi); }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.INTERACTION) { // new: overhead image on last interacting player
+                    if(tokenService!=null){ String last=tokenService.getLastInteractionNameLower(); if(last!=null && !last.isBlank()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { drawImageOverEntity(graphics,p,oi); break; } } }
                 }
             }
         }
@@ -416,6 +442,13 @@ public class HighlightOverlay extends Overlay {
             case MINIMAP:
                 // ignored here
                 break;
+            case LINE: {
+                Player local = client.getLocalPlayer(); if(local==null||p==null) break; if(local==p) break;
+                LocalPoint lp1 = local.getLocalLocation(); LocalPoint lp2 = p.getLocalLocation(); if(lp1==null||lp2==null) break;
+                Polygon poly1 = Perspective.getCanvasTilePoly(client, lp1); Polygon poly2 = Perspective.getCanvasTilePoly(client, lp2);
+                if(poly1==null||poly2==null) break; Rectangle b1=poly1.getBounds(); Rectangle b2=poly2.getBounds(); int x1=b1.x+b1.width/2; int y1=b1.y+b1.height/2; int x2=b2.x+b2.width/2; int y2=b2.y+b2.height/2;
+                graphics.setStroke(new BasicStroke(Math.max(1f,h.getWidth()))); graphics.setColor(h.getColor()); graphics.drawLine(x1,y1,x2,y2);
+                break; }
         }
     }
     private void renderHighlightFor(Graphics2D graphics, ActiveHighlight h, NPC npc) {
@@ -443,6 +476,13 @@ public class HighlightOverlay extends Overlay {
                 break; }
             case MINIMAP:
                 break;
+            case LINE: {
+                Player local = client.getLocalPlayer(); if(local==null||npc==null) break;
+                LocalPoint lp1 = local.getLocalLocation(); LocalPoint lp2 = npc.getLocalLocation(); if(lp1==null||lp2==null) break;
+                Polygon poly1 = Perspective.getCanvasTilePoly(client, lp1); Polygon poly2 = Perspective.getCanvasTilePoly(client, lp2);
+                if(poly1==null||poly2==null) break; Rectangle b1=poly1.getBounds(); Rectangle b2=poly2.getBounds(); int x1=b1.x+b1.width/2; int y1=b1.y+b1.height/2; int x2=b2.x+b2.width/2; int y2=b2.y+b2.height/2;
+                graphics.setStroke(new BasicStroke(Math.max(1f,h.getWidth()))); graphics.setColor(h.getColor()); graphics.drawLine(x1,y1,x2,y2);
+                break; }
         }
     }
 

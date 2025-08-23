@@ -27,6 +27,12 @@ public class TokenService {
     @Getter private String lastPlayerDespawn = "";
     // New: last player who started interacting with local player (formatted Name (Combat))
     @Getter private String lastInteraction = "";
+    private String lastInteractionNameLower = ""; // new raw lower name
+
+    /** Aggregated recent spawns (name -> epoch ms) */
+    private final LinkedHashMap<String, Long> recentPlayerSpawns = new LinkedHashMap<>();
+    private final Map<String,String> recentPlayerSpawnOriginal = new HashMap<>();
+    private static final long RECENT_SPAWN_WINDOW_MS = 7000L; // 7s window
 
     /** Update internal hitsplat state (called from plugin event). */
     public void updateHitsplat(boolean self, boolean target, int amount){
@@ -36,16 +42,29 @@ public class TokenService {
 
     /** New: update spawn/despawn tokens */
     public void updatePlayerSpawnToken(Player p, boolean despawn){
-        if(p==null) return;
-        String name = sanitizePlayerName(p.getName());
+        if(p==null) return; String name = sanitizePlayerName(p.getName()); String low = name.toLowerCase(Locale.ROOT);
         int cb=0; try { cb = p.getCombatLevel(); } catch(Exception ignored){}
         String formatted = name + " (" + cb + ")";
-        if(despawn) lastPlayerDespawn = formatted; else lastPlayerSpawn = formatted;
+        if(despawn) {
+            lastPlayerDespawn = formatted;
+            recentPlayerSpawns.remove(low); recentPlayerSpawnOriginal.remove(low);
+        } else {
+            lastPlayerSpawn = formatted; long now = System.currentTimeMillis(); recentPlayerSpawns.put(low, now); recentPlayerSpawnOriginal.put(low, name); pruneRecentSpawns(now);
+        }
+    }
+    private void pruneRecentSpawns(long now){
+        Iterator<Map.Entry<String,Long>> it = recentPlayerSpawns.entrySet().iterator();
+        while(it.hasNext()){
+            Map.Entry<String,Long> e = it.next();
+            if(now - e.getValue() > RECENT_SPAWN_WINDOW_MS) it.remove();
+        }
     }
 
     /** Update interaction token when another player begins interacting with local player */
     public void updateInteraction(Player p){
-        if(p==null) return; String name = sanitizePlayerName(p.getName()); int cb=0; try { cb=p.getCombatLevel(); } catch(Exception ignored){} lastInteraction = name + " ("+cb+")"; }
+        if(p==null) return; String name = sanitizePlayerName(p.getName()); int cb=0; try { cb=p.getCombatLevel(); } catch(Exception ignored){} lastInteraction = name + " ("+cb+")"; lastInteractionNameLower = name.toLowerCase(java.util.Locale.ROOT); }
+
+    public String getLastInteractionNameLower(){ return lastInteractionNameLower; }
 
     private String sanitizePlayerName(String n){
         if(n==null) return "";
@@ -63,6 +82,7 @@ public class TokenService {
         String local = "Unknown";
         try { if(client.getLocalPlayer()!=null) local = sanitizePlayerName(client.getLocalPlayer().getName()); } catch(Exception ignored){}
         ctx.put("player", local);
+        ctx.put("RSN", local); ctx.put("$RSN", local); ctx.put("rsn", local); // new alias for local player name
         ctx.put("TARGET", currentTargetName!=null? currentTargetName : "");
         ctx.put("$TARGET", currentTargetName!=null? currentTargetName : "");
         ctx.put("stat", skill!=null? skill.name(): "");
@@ -92,13 +112,16 @@ public class TokenService {
         ctx.put("hitsplat_self", ctx.get("HITSPLAT_SELF"));
         ctx.put("hitsplat_target", ctx.get("HITSPLAT_TARGET"));
         try { ctx.put("WORLD", String.valueOf(client.getWorld())); } catch(Exception ignored){ ctx.put("WORLD"," "); }
-        // New: spawn/despawn tokens
-        ctx.put("PLAYER_SPAWN", lastPlayerSpawn);
-        ctx.put("player_spawn", lastPlayerSpawn);
-        ctx.put("$PLAYER_SPAWN", lastPlayerSpawn);
-        ctx.put("PLAYER_DESPAWN", lastPlayerDespawn);
-        ctx.put("player_despawn", lastPlayerDespawn);
-        ctx.put("$PLAYER_DESPAWN", lastPlayerDespawn);
+        ctx.put("$WORLD", ctx.get("WORLD")); ctx.put("world", ctx.get("WORLD")); ctx.put("$world", ctx.get("WORLD"));
+        // New aggregated spawn list (comma separated names that spawned recently)
+        String aggregatedSpawns = buildAggregatedRecentSpawns();
+        ctx.put("PLAYER_SPAWN", aggregatedSpawns);
+        ctx.put("player_spawn", aggregatedSpawns);
+        ctx.put("$PLAYER_SPAWN", aggregatedSpawns);
+        ctx.put("$player_spawn", aggregatedSpawns);
+        // keep individual last spawn/despawn for backwards compatibility
+        ctx.put("LAST_PLAYER_SPAWN", lastPlayerSpawn);
+        ctx.put("LAST_PLAYER_DESPAWN", lastPlayerDespawn);
         // Interaction token
         ctx.put("INTERACTION", lastInteraction);
         ctx.put("interaction", lastInteraction);
@@ -111,10 +134,26 @@ public class TokenService {
                 ctx.put("$CURRENT_"+s.name(), String.valueOf(boosted));
                 ctx.put(s.name(), String.valueOf(real));
                 ctx.put("CURRENT_"+s.name(), String.valueOf(boosted));
+                // lowercase variants
+                String low = s.name().toLowerCase(Locale.ROOT);
+                ctx.put("$"+low, String.valueOf(real));
+                ctx.put("$current_"+low, String.valueOf(boosted));
+                ctx.put(low, String.valueOf(real));
+                ctx.put("current_"+low, String.valueOf(boosted));
             } catch(Exception ignored){}
+        }
+        if(skill!=null){
+            String sn = skill.name().toLowerCase(Locale.ROOT);
+            try { ctx.put("$skill", String.valueOf(client.getRealSkillLevel(skill))); } catch(Exception ignored){ ctx.put("$skill", ""); }
+            try { ctx.put("$current_skill", String.valueOf(client.getBoostedSkillLevel(skill))); } catch(Exception ignored){ ctx.put("$current_skill", ""); }
+            ctx.put("skill_name", sn);
         }
         return ctx;
     }
+
+    private String buildAggregatedRecentSpawns(){
+        long now = System.currentTimeMillis(); pruneRecentSpawns(now); if(recentPlayerSpawns.isEmpty()) return ""; StringBuilder sb=new StringBuilder(); for(String low: recentPlayerSpawns.keySet()){ if(sb.length()>0) sb.append(", "); String orig = recentPlayerSpawnOriginal.getOrDefault(low, low); sb.append(orig); } return sb.toString(); }
+    public Set<String> getRecentSpawnLowerNames(){ pruneRecentSpawns(System.currentTimeMillis()); return new HashSet<>(recentPlayerSpawns.keySet()); }
 
     /** Expand tokens inside a string. */
     public String expand(String input, Map<String,String> ctx){

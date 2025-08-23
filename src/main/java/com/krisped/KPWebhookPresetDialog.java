@@ -92,7 +92,9 @@ public class KPWebhookPresetDialog extends JDialog
     // Inventory trigger components
     private JPanel inventoryCard; private JTextField inventoryField; // new inventory card
     // Interacting trigger components
-    private JPanel interactingCard; private JCheckBox interactingOnlyPvpWildBox; private JCheckBox interactingOnlyAttackableBox;
+    private JPanel interactingCard; private JCheckBox interactingOnlyPvpWildBox; private JCheckBox interactingOnlyAttackableBox; private JCheckBox interactingEnableNpcBox; // new
+    // Target trigger components
+    private JPanel targetCard; private JCheckBox targetOnlyPvpWildBox; private JCheckBox targetOnlyAttackableBox; private JCheckBox targetEnableNpcBox; // new
 
     /* -------- Settings Tab (kategorier) -------- */
     private JPanel settingsRoot;
@@ -628,6 +630,12 @@ public class KPWebhookPresetDialog extends JDialog
         if(r.getTriggerType()== KPWebhookPreset.TriggerType.INTERACTING && r.getInteractingConfig()!=null){
             if(interactingOnlyPvpWildBox!=null) interactingOnlyPvpWildBox.setSelected(r.getInteractingConfig().isOnlyPvPOrWilderness());
             if(interactingOnlyAttackableBox!=null) interactingOnlyAttackableBox.setSelected(r.getInteractingConfig().isOnlyAttackable());
+            if(interactingEnableNpcBox!=null) interactingEnableNpcBox.setSelected(r.getInteractingConfig().isEnableNpc());
+        }
+        if(r.getTriggerType()== KPWebhookPreset.TriggerType.TARGET && r.getTargetConfig()!=null){
+            if(targetOnlyPvpWildBox!=null) targetOnlyPvpWildBox.setSelected(r.getTargetConfig().isOnlyPvPOrWilderness());
+            if(targetOnlyAttackableBox!=null) targetOnlyAttackableBox.setSelected(r.getTargetConfig().isOnlyAttackable());
+            if(targetEnableNpcBox!=null) targetEnableNpcBox.setSelected(r.getTargetConfig().isEnableNpc());
         }
     }
 
@@ -661,6 +669,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.InventoryConfig inventoryCfg = null; // new inventory config
         KPWebhookPreset.XpConfig xpCfg = null; // new xp drop config
         KPWebhookPreset.InteractingConfig interactingCfg = null; // new interacting config
+        KPWebhookPreset.TargetConfig targetCfg = null; // new target config
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -839,7 +848,14 @@ public class KPWebhookPresetDialog extends JDialog
         else if (trig == KPWebhookPreset.TriggerType.INTERACTING){
             boolean onlyPvpWild = interactingOnlyPvpWildBox!=null && interactingOnlyPvpWildBox.isSelected();
             boolean onlyAttackable = interactingOnlyAttackableBox!=null && interactingOnlyAttackableBox.isSelected();
-            interactingCfg = KPWebhookPreset.InteractingConfig.builder().onlyPvPOrWilderness(onlyPvpWild).onlyAttackable(onlyAttackable).build();
+            boolean enableNpc = interactingEnableNpcBox!=null && interactingEnableNpcBox.isSelected();
+            interactingCfg = KPWebhookPreset.InteractingConfig.builder().onlyPvPOrWilderness(onlyPvpWild).onlyAttackable(onlyAttackable).enableNpc(enableNpc).build();
+        }
+        else if (trig == KPWebhookPreset.TriggerType.TARGET){
+            boolean onlyPvpWild = targetOnlyPvpWildBox!=null && targetOnlyPvpWildBox.isSelected();
+            boolean onlyAttackable = targetOnlyAttackableBox!=null && targetOnlyAttackableBox.isSelected();
+            boolean enableNpc = targetEnableNpcBox!=null && targetEnableNpcBox.isSelected();
+            targetCfg = KPWebhookPreset.TargetConfig.builder().onlyPvPOrWilderness(onlyPvpWild).onlyAttackable(onlyAttackable).enableNpc(enableNpc).build();
         }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
@@ -933,6 +949,7 @@ public class KPWebhookPresetDialog extends JDialog
         if(inventoryCfg!=null || trig== KPWebhookPreset.TriggerType.INVENTORY_FULL || trig== KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || trig== KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE) b.inventoryConfig(inventoryCfg);
         if(xpCfg!=null || trig== KPWebhookPreset.TriggerType.XP_DROP) b.xpConfig(xpCfg);
         if(interactingCfg!=null || trig== KPWebhookPreset.TriggerType.INTERACTING) b.interactingConfig(interactingCfg);
+        if(targetCfg!=null || trig== KPWebhookPreset.TriggerType.TARGET) b.targetConfig(targetCfg);
 
         result = b.build();
         dispose();
@@ -968,11 +985,13 @@ public class KPWebhookPresetDialog extends JDialog
         String sel = (String) triggerTypeBox.getSelectedItem();
         if (sel == null || TRIGGER_PLACEHOLDER.equals(sel) ||
                 KPWebhookPreset.TriggerType.MANUAL.name().equals(sel) ||
-                KPWebhookPreset.TriggerType.TICK.name().equals(sel) ||
-                KPWebhookPreset.TriggerType.TARGET.name().equals(sel))
+                KPWebhookPreset.TriggerType.TICK.name().equals(sel))
         {
             cl.show(triggerCards, "NONE");
             if (triggerDetailsPanel != null) triggerDetailsPanel.setVisible(false);
+        }
+        else if (KPWebhookPreset.TriggerType.TARGET.name().equals(sel)){
+            cl.show(triggerCards, KPWebhookPreset.TriggerType.TARGET.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);
         }
         else if (KPWebhookPreset.TriggerType.PLAYER_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.PLAYER_DESPAWN.name().equals(sel))
         { cl.show(triggerCards, "PLAYER"); if (triggerDetailsPanel != null) triggerDetailsPanel.setVisible(true); }
@@ -1133,7 +1152,9 @@ public class KPWebhookPresetDialog extends JDialog
         // INVENTORY
         inventoryCard = new JPanel(new GridBagLayout()); GridBagConstraints icv = new GridBagConstraints(); icv.insets=new Insets(4,4,4,4); icv.fill=GridBagConstraints.HORIZONTAL; icv.anchor=GridBagConstraints.WEST; icv.weightx=1; int ivy=0; icv.gridx=0; icv.gridy=ivy; inventoryCard.add(new JLabel("Item filter"), icv); inventoryField=new JTextField(); inventoryField.setToolTipText("Kommaseparert: itemId, eksakt navn, delnavn eller *wildcard*. Tom: alle (kun for FULL / ITEM_ADDED)"); icv.gridx=1; inventoryCard.add(inventoryField, icv);
         // INTERACTING
-        interactingCard = new JPanel(new GridBagLayout()); GridBagConstraints in = new GridBagConstraints(); in.insets=new Insets(4,4,4,4); in.fill=GridBagConstraints.HORIZONTAL; in.anchor=GridBagConstraints.WEST; in.weightx=1; int iny=0; in.gridx=0; in.gridy=iny++; in.gridwidth=2; JLabel interLbl=new JLabel("Interacting options"); interactingCard.add(interLbl,in); in.gridwidth=1; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only PvP/Wild"), in); interactingOnlyPvpWildBox=new JCheckBox(); in.gridx=1; interactingCard.add(interactingOnlyPvpWildBox,in); iny++; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only attackable"), in); interactingOnlyAttackableBox=new JCheckBox(); interactingOnlyAttackableBox.setToolTipText("Krever at spilleren er innenfor lovlig combat range (PvP 15, Wildy nivå, kombinert 15+wildy)"); in.gridx=1; interactingCard.add(interactingOnlyAttackableBox,in);
+        interactingCard = new JPanel(new GridBagLayout()); GridBagConstraints in = new GridBagConstraints(); in.insets=new Insets(4,4,4,4); in.fill=GridBagConstraints.HORIZONTAL; in.anchor=GridBagConstraints.WEST; in.weightx=1; int iny=0; in.gridx=0; in.gridy=iny++; in.gridwidth=2; JLabel interLbl=new JLabel("Interacting options"); interactingCard.add(interLbl,in); in.gridwidth=1; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only PvP/Wild"), in); interactingOnlyPvpWildBox=new JCheckBox(); in.gridx=1; interactingCard.add(interactingOnlyPvpWildBox,in); iny++; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only attackable"), in); interactingOnlyAttackableBox=new JCheckBox(); interactingOnlyAttackableBox.setToolTipText("Krever at spilleren er innenfor lovlig combat range (PvP 15, Wildy nivå, kombinert 15+wildy)"); in.gridx=1; interactingCard.add(interactingOnlyAttackableBox,in); iny++; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Enable NPC"), in); interactingEnableNpcBox=new JCheckBox(); interactingEnableNpcBox.setToolTipText("Også trigge når en NPC begynner å angripe deg"); in.gridx=1; interactingCard.add(interactingEnableNpcBox,in);
+        // TARGET card
+        targetCard = new JPanel(new GridBagLayout()); GridBagConstraints tg = new GridBagConstraints(); tg.insets=new Insets(4,4,4,4); tg.fill=GridBagConstraints.HORIZONTAL; tg.anchor=GridBagConstraints.WEST; tg.weightx=1; int tgy=0; tg.gridx=0; tg.gridy=tgy++; tg.gridwidth=2; JLabel tgtLbl=new JLabel("Target filter"); targetCard.add(tgtLbl,tg); tg.gridwidth=1; tg.gridx=0; tg.gridy=tgy; targetCard.add(new JLabel("Only PvP/Wild"), tg); targetOnlyPvpWildBox=new JCheckBox(); tg.gridx=1; targetCard.add(targetOnlyPvpWildBox,tg); tgy++; tg.gridx=0; tg.gridy=tgy; targetCard.add(new JLabel("Only attackable"), tg); targetOnlyAttackableBox=new JCheckBox(); targetOnlyAttackableBox.setToolTipText("Kun når target er angripbar (PvP range / Wild nivå)"); tg.gridx=1; targetCard.add(targetOnlyAttackableBox,tg); tgy++; tg.gridx=0; tg.gridy=tgy; targetCard.add(new JLabel("Enable NPC"), tg); targetEnableNpcBox=new JCheckBox(); targetEnableNpcBox.setSelected(true); targetEnableNpcBox.setToolTipText("Inkluder NPCs som target (default på)"); tg.gridx=1; targetCard.add(targetEnableNpcBox,tg);
 
         // NONE placeholder
         cards.add(new JPanel(), "NONE");
@@ -1158,6 +1179,7 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(regionCard, KPWebhookPreset.TriggerType.REGION.name());
         cards.add(inventoryCard, "INVENTORY"); // shared for inventory triggers
         cards.add(interactingCard, KPWebhookPreset.TriggerType.INTERACTING.name());
+        cards.add(targetCard, KPWebhookPreset.TriggerType.TARGET.name());
 
         return cards;
     }

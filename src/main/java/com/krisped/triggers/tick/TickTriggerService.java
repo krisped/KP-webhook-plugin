@@ -1,15 +1,17 @@
 package com.krisped.triggers.tick;
 
-import com.krisped.KPWebhookPlugin;
 import com.krisped.KPWebhookPreset;
+import com.krisped.KPWebhookPlugin;
 import com.krisped.commands.highlight.HighlightManager;
 import com.krisped.commands.highlight.HighlightType;
+import com.krisped.commands.tokens.TokenService;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.*;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -19,14 +21,16 @@ import java.util.regex.Pattern;
 @Singleton
 public class TickTriggerService {
     private final HighlightManager highlightManager;
+    private final TokenService tokenService; // new
 
     private static final Pattern P_TEXT_UNDER = Pattern.compile("(?i)^TEXT_UNDER\\s+(.*)");
     private static final Pattern P_TEXT_OVER = Pattern.compile("(?i)^TEXT_OVER\\s+(.*)");
     private static final Pattern P_TEXT_CENTER = Pattern.compile("(?i)^TEXT_CENTER\\s+(.*)");
 
     @Inject
-    public TickTriggerService(HighlightManager highlightManager) {
+    public TickTriggerService(HighlightManager highlightManager, TokenService tokenService) {
         this.highlightManager = highlightManager;
+        this.tokenService = tokenService;
     }
 
     public void process(List<KPWebhookPreset> rules, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts) {
@@ -35,31 +39,31 @@ public class TickTriggerService {
             if (r == null || !r.isActive() || r.getTriggerType() != KPWebhookPreset.TriggerType.TICK) continue;
             String cmds = r.getCommands();
             if (cmds == null || cmds.isBlank()) continue;
+            // Build a fresh context per rule for tokens (target dynamic, skills irrelevant here)
+            Map<String,String> ctx = tokenService.buildContext(null,-1,null,null,null, null);
             for (String raw : cmds.split("\r?\n")) {
-                String line = raw.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-                String upper = line.toUpperCase(Locale.ROOT);
+                String lineOrig = raw.trim();
+                if (lineOrig.isEmpty() || lineOrig.startsWith("#")) continue;
+                String expanded = tokenService.expand(lineOrig, ctx);
+                String upper = expanded.toUpperCase(Locale.ROOT);
                 if (upper.startsWith("HIGHLIGHT_")) {
-                    ensurePersistentHighlight(r, upper);
-                } else if (P_TEXT_UNDER.matcher(line).find() || P_TEXT_OVER.matcher(line).find() || P_TEXT_CENTER.matcher(line).find()) {
-                    handlePersistentText(r, line, overheadTexts);
+                    parseAndUpsertTargetedHighlight(r, expanded); // use expanded line
+                } else if (P_TEXT_UNDER.matcher(expanded).find() || P_TEXT_OVER.matcher(expanded).find() || P_TEXT_CENTER.matcher(expanded).find()) {
+                    handlePersistentText(r, expanded, overheadTexts, ctx);
                 }
             }
         }
     }
 
-    private void ensurePersistentHighlight(KPWebhookPreset rule, String lineUpper) {
-        parseAndUpsertTargetedHighlight(rule, lineUpper);
-    }
-
     private void parseAndUpsertTargetedHighlight(KPWebhookPreset rule, String line) {
-        // Accept: HIGHLIGHT_<TYPE> [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS]
+        // Accept: HIGHLIGHT_<TYPE> ... + new LINE type and PLAYER_SPAWN target
         String upper = line.toUpperCase(Locale.ROOT);
         HighlightType type = null;
         if (upper.startsWith("HIGHLIGHT_OUTLINE")) type = HighlightType.OUTLINE;
         else if (upper.startsWith("HIGHLIGHT_TILE")) type = HighlightType.TILE;
         else if (upper.startsWith("HIGHLIGHT_HULL")) type = HighlightType.HULL;
         else if (upper.startsWith("HIGHLIGHT_MINIMAP")) type = HighlightType.MINIMAP;
+        else if (upper.startsWith("HIGHLIGHT_LINE")) type = HighlightType.LINE;
         if (type == null) return;
         String remainder = line.contains(" ")? line.substring(line.indexOf(' ')+1).trim():"";
         com.krisped.commands.highlight.ActiveHighlight.TargetType targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.LOCAL_PLAYER;
@@ -93,6 +97,8 @@ public class TickTriggerService {
                     targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.CLAN_MEMBERS;
                 } else if (t0.equals("OTHERS")) {
                     targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.OTHERS;
+                } else if (t0.equals("PLAYER_SPAWN")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.PLAYER_SPAWN;
                 }
             }
         }
@@ -105,27 +111,28 @@ public class TickTriggerService {
                 highlightManager.upsertHighlightTargeted(rule.getId(), HighlightType.HULL, safe(rule.getHlHullWidth(),2), rule.getHlHullColor(), bool(rule.getHlHullBlink()), targetType, targetNames, targetIds); break;
             case MINIMAP:
                 highlightManager.upsertHighlightTargeted(rule.getId(), HighlightType.MINIMAP, safe(rule.getHlMinimapWidth(),2), rule.getHlMinimapColor(), bool(rule.getHlMinimapBlink()), targetType, targetNames, targetIds); break;
+            case LINE:
+                highlightManager.upsertHighlightTargeted(rule.getId(), HighlightType.LINE, safe(rule.getHlOutlineWidth(),2), rule.getHlOutlineColor(), bool(rule.getHlOutlineBlink()), targetType, targetNames, targetIds); break;
         }
     }
 
     private String normalizeName(String n){ if (n==null) return ""; return n.replace('_',' ').trim().toLowerCase(Locale.ROOT); }
 
-    private void handlePersistentText(KPWebhookPreset rule, String line, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts) {
+    private void handlePersistentText(KPWebhookPreset rule, String line, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts, Map<String,String> ctx) {
         java.util.regex.Matcher mUnder = P_TEXT_UNDER.matcher(line);
         java.util.regex.Matcher mOver = P_TEXT_OVER.matcher(line);
         java.util.regex.Matcher mCenter = P_TEXT_CENTER.matcher(line);
         if (mUnder.find()) {
-            upsertPersistentOverheadText(rule, mUnder.group(1).trim(), "Under", overheadTexts);
+            upsertPersistentOverheadText(rule, tokenService.expand(mUnder.group(1).trim(), ctx), "Under", overheadTexts, ctx);
         } else if (mOver.find()) {
-            upsertPersistentOverheadText(rule, mOver.group(1).trim(), "Above", overheadTexts);
+            upsertPersistentOverheadText(rule, tokenService.expand(mOver.group(1).trim(), ctx), "Above", overheadTexts, ctx);
         } else if (mCenter.find()) {
-            upsertPersistentOverheadText(rule, mCenter.group(1).trim(), "Center", overheadTexts);
+            upsertPersistentOverheadText(rule, tokenService.expand(mCenter.group(1).trim(), ctx), "Center", overheadTexts, ctx);
         }
     }
 
-    private void upsertPersistentOverheadText(KPWebhookPreset rule, String text, String position, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts) {
+    private void upsertPersistentOverheadText(KPWebhookPreset rule, String text, String position, List<KPWebhookPlugin.ActiveOverheadText> overheadTexts, Map<String,String> ctx) {
         if (text == null || text.isBlank()) return;
-        // Target parsing: [LOCAL_PLAYER|PLAYER name|NPC name-or-id|TARGET|FRIEND_LIST|IGNORE_LIST|PARTY_MEMBERS|FRIENDS_CHAT|TEAM_MEMBERS|CLAN_MEMBERS|OTHERS] <message>
         String working = text;
         KPWebhookPlugin.ActiveOverheadText.TargetType targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.LOCAL_PLAYER;
         java.util.Set<String> targetNames = null; java.util.Set<Integer> targetIds = null;
@@ -147,8 +154,10 @@ public class TickTriggerService {
             else if (t0.equals("TEAM_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.TEAM_MEMBERS; working = working.substring(toks[0].length()).trim(); }
             else if (t0.equals("CLAN_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.CLAN_MEMBERS; working = working.substring(toks[0].length()).trim(); }
             else if (t0.equals("OTHERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.OTHERS; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("PLAYER_SPAWN")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.PLAYER_SPAWN; working = working.substring(toks[0].length()).trim(); }
         }
         if (working.isEmpty()) return;
+        working = tokenService.expand(working, ctx); // final expansion post target removal
         // Build deterministic identity components for de-dup
         String normNames = null;
         if (targetNames != null && !targetNames.isEmpty()) {
