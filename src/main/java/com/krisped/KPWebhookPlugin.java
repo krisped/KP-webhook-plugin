@@ -33,6 +33,7 @@ import com.krisped.commands.tokens.TokenService; // added
 import com.krisped.commands.custom_message.CustomMessageCommandHandler;
 import com.krisped.triggers.player.PlayerTriggerService;
 import com.krisped.triggers.stat.StatTriggerService;
+import com.krisped.triggers.xp.XpDropTriggerService; // added
 
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
@@ -89,6 +90,7 @@ public class KPWebhookPlugin extends Plugin {
     @Inject private CustomMessageCommandHandler customMessageCommandHandler; // added
     @Inject private PlayerTriggerService playerTriggerService; // new service for player spawn/despawn
     @Inject private StatTriggerService statTriggerService; // new STAT trigger service
+    @Inject private XpDropTriggerService xpDropTriggerService; // new XP_DROP trigger service
 
     private KPWebhookPanel panel; private NavigationButton navButton; private KPWebhookStorage storage;
     private final List<KPWebhookPreset> rules = new ArrayList<>(); private int nextId=0; private KPWebhookDebugWindow debugWindow; private KPWebhookPresetDebugWindow presetDebugWindow;
@@ -236,6 +238,7 @@ public class KPWebhookPlugin extends Plugin {
     public void softCancelOnChangePublic(KPWebhookPreset r){ softCancelOnChange(r); }
     public void savePresetPublic(KPWebhookPreset r){ savePreset(r); }
     public void executeStatRule(KPWebhookPreset r, Skill skill, int real){ executeRule(r, skill, real, r.getStatConfig(), r.getWidgetConfig()); }
+    public void executeXpRule(KPWebhookPreset r, Skill skill, int totalXp){ executeRule(r, skill, totalXp, null, r.getWidgetConfig()); } // new XP helper
 
     // === Restored executeRule overloads & baseContext for trigger execution ===
     private void executeRule(KPWebhookPreset rule, Skill skill, int value, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg){ executeRule(rule,skill,value,statCfg,widgetCfg,null,null); }
@@ -280,6 +283,7 @@ public class KPWebhookPlugin extends Plugin {
             }
         }
         if(statTriggerService!=null){ try { statTriggerService.process(ev, rules, this); } catch(Exception e){ log.warn("Stat trigger processing error", e); } }
+        if(xpDropTriggerService!=null){ try { xpDropTriggerService.process(ev, rules, this); } catch(Exception e){ log.warn("XP drop trigger processing error", e); } } // new XP processing
     }
 
     /* === Game Tick === */
