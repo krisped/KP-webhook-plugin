@@ -308,6 +308,8 @@ public class KPWebhookPreset
     private int lastSeenRealLevel = -1;
     @Builder.Default
     private int lastTriggeredBoosted = Integer.MIN_VALUE; // new: last boosted value that triggered while condition true
+    @Builder.Default
+    private transient long lastTriggeredAt = 0L; // epoch ms of last successful trigger (session only, not persisted)
 
     // =========== Highlight OUTLINE settings ===========
     @Builder.Default

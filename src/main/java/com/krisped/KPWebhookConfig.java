@@ -86,4 +86,21 @@ public interface KPWebhookConfig extends Config
             section = screenshotSection
     )
     default boolean hideTooltipsInScreenshots() { return true; }
+
+    // UI section
+    @ConfigSection(
+            name = "UI",
+            description = "User interface settings.",
+            position = 50
+    )
+    String uiSection = "ui";
+
+    @ConfigItem(
+            keyName = "showLastTriggered",
+            name = "Show last time triggered",
+            description = "Show relative time since each preset last triggered.",
+            section = uiSection,
+            position = 0
+    )
+    default boolean showLastTriggered() { return false; }
 }

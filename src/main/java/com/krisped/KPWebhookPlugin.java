@@ -126,6 +126,10 @@ public class KPWebhookPlugin extends Plugin {
     // Restore baseline stats logged flag (used by debug window)
     private boolean baselineStatsLogged = false;
 
+    // External settings and periodic refresh
+    private KPWebhookUserSettings userSettings; // external UI settings
+    private java.util.concurrent.ScheduledFuture<?> lastTriggeredRefreshFuture; // periodic refresh task
+
     // Overhead texts
     @Data public static class ActiveOverheadText { String text; Color color; boolean blink; int size; String position; int remainingTicks; boolean visiblePhase; int blinkCounter; int blinkInterval; boolean bold; boolean italic; boolean underline; String key; boolean persistent; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
     private final List<ActiveOverheadText> overheadTexts = new ArrayList<>(); public List<ActiveOverheadText> getOverheadTexts(){ return overheadTexts; }
@@ -148,15 +152,43 @@ public class KPWebhookPlugin extends Plugin {
 
     @Provides KPWebhookConfig provideConfig(ConfigManager cm){ return cm.getConfig(KPWebhookConfig.class); }
 
-    @Override protected void startUp(){ panel = new KPWebhookPanel(this); navButton = NavigationButton.builder().tooltip("KP Webhook").icon(ImageUtil.loadImageResource(KPWebhookPlugin.class, "webhook.png")).priority(1).panel(panel).build(); clientToolbar.addNavigation(navButton); overlayManager.add(highlightOverlay); overlayManager.add(minimapHighlightOverlay); overlayManager.add(overlayTextOverlay); captureInitialRealLevels(); storage = new KPWebhookStorage(configManager, gson); rules.clear(); rules.addAll(storage.loadAll()); // establish nextId
+    @Override protected void startUp(){
+        userSettings = KPWebhookUserSettings.load();
+        // One-time migration from legacy Runelite config value (if any) -> external file
+        try {
+            if(userSettings!=null && !userSettings.isMigratedShowLastTriggered()){
+                if(config!=null && config.showLastTriggered()){
+                    userSettings.setShowLastTriggered(true);
+                }
+                userSettings.setMigratedShowLastTriggered(true);
+                userSettings.save();
+            }
+        } catch(Exception ignored){}
+        panel = new KPWebhookPanel(this); navButton = NavigationButton.builder().tooltip("KP Webhook").icon(ImageUtil.loadImageResource(KPWebhookPlugin.class, "webhook.png")).priority(1).panel(panel).build(); clientToolbar.addNavigation(navButton); overlayManager.add(highlightOverlay); overlayManager.add(minimapHighlightOverlay); overlayManager.add(overlayTextOverlay); captureInitialRealLevels(); storage = new KPWebhookStorage(configManager, gson); rules.clear(); rules.addAll(storage.loadAll()); // establish nextId
         nextId = 0; for (KPWebhookPreset r: rules) if (r.getId()>=nextId) nextId=r.getId()+1; // repair any invalid / duplicate ids
         ensureUniqueIds(); panel.refreshTable();
         try { if(playerTriggerService!=null) playerTriggerService.setPlugin(this); } catch(Exception ignored){}
-        // Initialize stat baselines so LEVEL_UP doesn't instantly fire on startup
         try { com.krisped.triggers.stat.StatTriggerHelper.initializeBaselines(client, rules); } catch(Exception ignored){}
+        scheduleLastTriggeredRefresh();
     }
-    @Override protected void shutDown(){ overlayManager.remove(highlightOverlay); overlayManager.remove(minimapHighlightOverlay); overlayManager.remove(overlayTextOverlay); clientToolbar.removeNavigation(navButton); saveAllPresets(); rules.clear(); highlightManager.clear(); overheadTexts.clear(); overheadImages.clear(); if (infoboxCommandHandler!=null) infoboxCommandHandler.clearAll(); if (overlayTextManager!=null) overlayTextManager.clear(); if (debugWindow!=null){ try{debugWindow.dispose();}catch(Exception ignored){} debugWindow=null;} if (presetDebugWindow!=null){ try{presetDebugWindow.dispose();}catch(Exception ignored){} presetDebugWindow=null;} }
-
+    @Override protected void shutDown(){ if(lastTriggeredRefreshFuture!=null){ try { lastTriggeredRefreshFuture.cancel(true);} catch(Exception ignored){} lastTriggeredRefreshFuture=null;} overlayManager.remove(highlightOverlay); overlayManager.remove(minimapHighlightOverlay); overlayManager.remove(overlayTextOverlay); clientToolbar.removeNavigation(navButton); saveAllPresets(); rules.clear(); highlightManager.clear(); overheadTexts.clear(); overheadImages.clear(); if (infoboxCommandHandler!=null) infoboxCommandHandler.clearAll(); if (overlayTextManager!=null) overlayTextManager.clear(); if (debugWindow!=null){ try{debugWindow.dispose();}catch(Exception ignored){} debugWindow=null;} if (presetDebugWindow!=null){ try{presetDebugWindow.dispose();}catch(Exception ignored){} presetDebugWindow=null;} }
+    private void scheduleLastTriggeredRefresh(){
+        if(executorService==null) return;
+        int interval = 60;
+        try { if(userSettings!=null) interval = Math.max(5, userSettings.getLastTriggeredRefreshSeconds()); } catch(Exception ignored){}
+        if(lastTriggeredRefreshFuture!=null){
+            try { lastTriggeredRefreshFuture.cancel(true); } catch(Exception ignored){}
+            lastTriggeredRefreshFuture=null;
+        }
+        final int useInterval = interval;
+        lastTriggeredRefreshFuture = executorService.scheduleAtFixedRate(() -> {
+            try {
+                if(panel!=null && isShowLastTriggered()){
+                    javax.swing.SwingUtilities.invokeLater(() -> { if(panel!=null) panel.updateAllLastTriggeredTimes(); });
+                }
+            } catch(Exception ignored){}
+        }, useInterval, useInterval, java.util.concurrent.TimeUnit.SECONDS);
+    }
     private void captureInitialRealLevels(){ for (Skill s: Skill.values()){ try { lastRealLevel.put(s, client.getRealSkillLevel(s)); } catch(Exception ignored){} } }
 
     public List<KPWebhookPreset> getRules(){ return rules; }
@@ -216,6 +248,9 @@ public class KPWebhookPlugin extends Plugin {
         }
         Map<String,String> ctx = baseContext(skill,value,widgetCfg,otherPlayer,npc);
         if(!isTick || (isTick && !cmds.isBlank())){ applyPresetOverheadTexts(rule, ctx); }
+        if(!isTick){ // record last trigger time (skip continuous TICK spam)
+            try { rule.setLastTriggeredAt(System.currentTimeMillis()); if(panel!=null) panel.updateLastTriggered(rule.getId()); } catch(Exception ignored){}
+        }
         if(cmds.isBlank()){ rule.setLastConditionMet(true); return; }
         List<PendingCommand> list=new ArrayList<>(); List<String> original=new ArrayList<>();
         for(String rawLine: cmds.split("\r?\n")){
@@ -569,4 +604,20 @@ public class KPWebhookPlugin extends Plugin {
     private boolean isInWilderness(){ return getWildernessLevel() > 0; }
     private boolean isPvPWorld(){ try { EnumSet<WorldType> types = client.getWorldType(); return types!=null && (types.contains(WorldType.PVP) || types.contains(WorldType.HIGH_RISK) || types.contains(WorldType.DEADMAN) || types.contains(WorldType.SEASONAL)); } catch(Exception e){ return false; } }
     private boolean isAttackablePerRules(Player local, Player other){ if(local==null || other==null) return false; int l=0,o=0; try { l=local.getCombatLevel(); o=other.getCombatLevel(); } catch(Exception ignored){} int diff=Math.abs(l-o); boolean pvp=isPvPWorld(); int wild=getWildernessLevel(); int maxDiff; if(wild>0){ maxDiff = wild + (pvp?15:0); } else if(pvp){ maxDiff=15; } else return false; return diff <= maxDiff; }
+    public boolean isShowLastTriggered(){ try { return userSettings!=null && userSettings.isShowLastTriggered(); } catch(Exception e){ return false; } }
+    public void setShowLastTriggered(boolean v){ try { if(userSettings!=null){ userSettings.setShowLastTriggered(v); userSettings.save(); } scheduleLastTriggeredRefresh(); } catch(Exception ignored){} }
+    // Category expanded state persistence
+    public Map<String, Boolean> getCategoryExpandedStates(){ try { return userSettings!=null? userSettings.getCategoryExpandedStates(): new HashMap<>(); } catch(Exception e){ return new HashMap<>(); } }
+    public void setCategoryExpandedState(String key, boolean expanded){ try { if(userSettings!=null && key!=null){ userSettings.getCategoryExpandedStates().put(key, expanded); userSettings.save(); } } catch(Exception ignored){} }
+    @Subscribe
+    public void onConfigChanged(net.runelite.client.events.ConfigChanged ev){ if(ev==null) return; if("kpwebhook".equals(ev.getGroup())){ if("showLastTriggered".equals(ev.getKey())){ // only mirror BEFORE migration; afterwards user's external choice wins
+            try { if(userSettings!=null && !userSettings.isMigratedShowLastTriggered()){ boolean val = config!=null && config.showLastTriggered(); setShowLastTriggered(val); if(panel!=null) javax.swing.SwingUtilities.invokeLater(panel::refreshTable); } } catch(Exception ignored){} }
+        }
+    }
+    @Subscribe public void onGameStateChanged(GameStateChanged ev){
+        if(ev.getGameState()==GameState.LOGGED_IN){
+            for(KPWebhookPreset p: rules){ if(p!=null) p.setLastTriggeredAt(0L); }
+            if(panel!=null){ SwingUtilities.invokeLater(() -> { if(panel!=null) panel.refreshTable(); }); }
+        }
+    }
 }
