@@ -1,5 +1,7 @@
 package com.krisped;
 
+import com.krisped.commands.tokens.TokenDocumentation;
+
 import java.util.*;
 
 /**
@@ -96,26 +98,17 @@ public final class KPWebhookInfoContent {
         triggers.put("INVENTORY_FULL", new Info("Inventory blir fullt. Valgfri filter-liste begrenser til om minst ett av oppførte items er i inv når den blir full (id, navn, substring eller *wildcard*).", "INVENTORY_FULL ore"));
         triggers.put("INVENTORY_ITEM_ADDED", new Info("Item lagt til i inventory matcher filter (id, navn, substring eller *wildcard*).", "INVENTORY_ITEM_ADDED 2351"));
         triggers.put("INVENTORY_CONTAINS_NONE", new Info("Inventory inneholder ingen av oppførte items (id/navn/substr/wildcard). Force-cancel = trigges så lenge det er sant.", "INVENTORY_CONTAINS_NONE food*"));
+        triggers.put("INTERACTING", new Info("En annen spiller begynner å interaktere med deg (kan filtreres med opsjonene i triggerpanelet).", "INTERACTING"));
 
         // TOKENS (token -> Info)
         Map<String, Info> tokens = new HashMap<>();
-        tokens.put("$HITSPLAT", new Info("Last hitsplat value (self or target depending on trigger).", "TEXT_OVER TARGET $HITSPLAT"));
-        tokens.put("$HITSPLAT_SELF", new Info("Last hitsplat on you.", "NOTIFY Self $HITSPLAT_SELF"));
-        tokens.put("$HITSPLAT_TARGET", new Info("Last hitsplat on target.", "NOTIFY Target $HITSPLAT_TARGET"));
-        tokens.put("$PLAYER / ${player}", new Info("Local player name.", "NOTIFY Hi $PLAYER"));
-        tokens.put("$TARGET / ${TARGET}", new Info("Current target name (may be empty).", "TEXT_OVER TARGET $TARGET"));
-        tokens.put("$WORLD / ${WORLD}", new Info("Current world.", "CUSTOM_MESSAGE GAMEMESSAGE World $WORLD"));
-        tokens.put("${current} / ${CURRENT_STAT}", new Info("Boosted level (STAT trigger).", "TEXT_OVER TARGET ${current}"));
-        tokens.put("${stat} / ${STAT}", new Info("Real level (STAT trigger).", "WEBHOOK Base stat ${stat}"));
-        tokens.put("${value}", new Info("Threshold value (stat/var/hitsplat comparison).", "NOTIFY Threshold ${value}"));
-        tokens.put("${widgetGroup}", new Info("Widget group id (WIDGET_SPAWN).", "NOTIFY Widget ${widgetGroup}"));
-        tokens.put("${widgetChild}", new Info("Widget child id (WIDGET_SPAWN, if set).", "NOTIFY Widget child ${widgetChild}"));
-        tokens.put("${time}", new Info("Current ISO timestamp.", "WEBHOOK Timestamp ${time}"));
-        tokens.put("${otherPlayer}", new Info("Other player name (PLAYER_* triggers).", "NOTIFY Player ${otherPlayer}"));
-        tokens.put("${otherCombat}", new Info("Other player combat level (PLAYER_* triggers).", "NOTIFY Combat ${otherCombat}"));
-        tokens.put("${npcName}", new Info("Matched NPC name (NPC_* triggers).", "NOTIFY NPC ${npcName}"));
-        tokens.put("${npcId}", new Info("Matched NPC id (NPC_* triggers).", "NOTIFY NPC id ${npcId}"));
-        tokens.put("Skill tokens", new Info("Each skill: $SKILL (real), $CURRENT_SKILL (boosted).", "NOTIFY HP $HITPOINTS/$CURRENT_HITPOINTS"));
+        for (var e : TokenDocumentation.getTokens().entrySet()) {
+            String key = e.getKey();
+            String[] val = e.getValue();
+            String desc = val.length>0? val[0]:"";
+            String example = val.length>1? val[1]:null;
+            tokens.put(key, new Info(desc, example));
+        }
 
         // Target selectors (entity tokens inside commands)
         List<String> targetSelectors = Arrays.asList(

@@ -45,7 +45,8 @@ public class KPWebhookPreset
         INVENTORY_ITEM_REMOVED, // new: matching item removed from inventory
         DEATH, // new: local player death
         LOOT_DROP, // new: ground item spawn matching filter
-        XP_DROP // new: experience changed threshold (above/below total XP)
+        XP_DROP, // new: experience changed threshold (above/below total XP)
+        INTERACTING // new: another player starts interacting with you
     }
 
     public enum StatMode
@@ -250,6 +251,18 @@ public class KPWebhookPreset
         private int xpThreshold; // total XP threshold
     }
 
+    // New interacting trigger config (adds PvP/Wilderness + attackable filtering)
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class InteractingConfig {
+        @Builder.Default
+        private boolean onlyPvPOrWilderness = false; // only fire when in wilderness OR on a PvP world
+        @Builder.Default
+        private boolean onlyAttackable = false; // require other player to be attackable per combat range rules
+    }
     @Builder.Default
     private int id = -1;
 
@@ -273,6 +286,7 @@ public class KPWebhookPreset
     private InventoryConfig inventoryConfig; // new inventory trigger config
     private LootConfig lootConfig; // new loot drop trigger config
     private XpConfig xpConfig; // new xp drop trigger config
+    private InteractingConfig interactingConfig; // new interacting trigger config
 
     private String webhookUrl;
     @Builder.Default
@@ -597,8 +611,13 @@ public class KPWebhookPreset
                     return b;
                 }
             case XP_DROP:
-                if(xpConfig==null || xpConfig.getSkill()==null) return "XP_DROP ?"; {
-                    String sym = xpConfig.getMode()==StatMode.BELOW?"<":">"; if(xpConfig.getMode()==StatMode.ABOVE) sym=">"; else if(xpConfig.getMode()==StatMode.BELOW) sym="<"; return "XP_DROP "+xpConfig.getSkill().name()+" "+sym+"= "+xpConfig.getXpThreshold(); }
+                if(xpConfig==null || xpConfig.getSkill()==null) return "XP_DROP ?"; { String sym = xpConfig.getMode()==StatMode.BELOW?"<":">"; if(xpConfig.getMode()==StatMode.ABOVE) sym=">"; else if(xpConfig.getMode()==StatMode.BELOW) sym="<"; return "XP_DROP "+xpConfig.getSkill().name()+" "+sym+"= "+xpConfig.getXpThreshold(); }
+            case INTERACTING:
+                if(interactingConfig==null) return "INTERACTING";
+                String ib = "INTERACTING";
+                if(interactingConfig.isOnlyPvPOrWilderness()) ib += " PvP/Wild";
+                if(interactingConfig.isOnlyAttackable()) ib += " Attackable";
+                return ib;
             default: return "?";
         }
     }

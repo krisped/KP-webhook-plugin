@@ -36,18 +36,21 @@ public class HighlightOverlay extends Overlay {
     private final ModelOutlineRenderer modelOutlineRenderer;
     private final HighlightManager highlightManager;
     private final PartyService partyService; // optional, may be null in some contexts
+    private final MarkTileManager markTileManager; // new source for marked tiles
 
     @Inject
     public HighlightOverlay(KPWebhookPlugin plugin,
                             Client client,
                             ModelOutlineRenderer modelOutlineRenderer,
                             HighlightManager highlightManager,
-                            PartyService partyService) { // added partyService
+                            PartyService partyService,
+                            MarkTileManager markTileManager) { // added markTileManager
         this.plugin = plugin;
         this.client = client;
         this.modelOutlineRenderer = modelOutlineRenderer;
         this.highlightManager = highlightManager;
         this.partyService = partyService;
+        this.markTileManager = markTileManager;
         setPosition(OverlayPosition.DYNAMIC);
         // Draw BELOW widgets so bank / UI panels are above highlights
         setLayer(OverlayLayer.UNDER_WIDGETS);
@@ -246,13 +249,13 @@ public class HighlightOverlay extends Overlay {
             }
         }
 
-        // Render MARK_TILE tiles
-        java.util.List<KPWebhookPlugin.MarkedTile> tiles = plugin.getMarkedTiles();
+        // Render MARK_TILE tiles via manager
+        java.util.List<MarkTileManager.MarkedTile> tiles = markTileManager.getMarkedTiles();
         if(tiles!=null && !tiles.isEmpty()){
             Font oldFont = graphics.getFont();
             Font tileFont = oldFont.deriveFont(Font.BOLD, 14f);
             graphics.setFont(tileFont);
-            for(KPWebhookPlugin.MarkedTile mt : tiles){
+            for(MarkTileManager.MarkedTile mt : tiles){
                 if(mt==null || mt.getWorldPoint()==null) continue;
                 net.runelite.api.coords.WorldPoint wp = mt.getWorldPoint();
                 if(wp.getPlane() != client.getPlane()) continue;

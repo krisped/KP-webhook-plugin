@@ -91,6 +91,8 @@ public class KPWebhookPresetDialog extends JDialog
     private JPanel regionCard; private JTextField regionIdsField; // new region card
     // Inventory trigger components
     private JPanel inventoryCard; private JTextField inventoryField; // new inventory card
+    // Interacting trigger components
+    private JPanel interactingCard; private JCheckBox interactingOnlyPvpWildBox; private JCheckBox interactingOnlyAttackableBox;
 
     /* -------- Settings Tab (kategorier) -------- */
     private JPanel settingsRoot;
@@ -139,7 +141,7 @@ public class KPWebhookPresetDialog extends JDialog
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
             "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id> | FRIEND_LIST | IGNORE_LIST | PARTY_MEMBERS | FRIENDS_CHAT | TEAM_MEMBERS | CLAN_MEMBERS | OTHERS\n" +
             "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
-            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}} $HITSPLAT_SELF $HITSPLAT_TARGET\n" +
+            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}} $HITSPLAT_SELF $HITSPLAT_TARGET $INTERACTION $PLAYER_SPAWN $PLAYER_DESPAWN\n" +
             "\n" +
             "NOTIFY You gained a level in {{stat}}\n" +
             "HIGHLIGHT_OUTLINE TARGET\n" +
@@ -623,6 +625,10 @@ public class KPWebhookPresetDialog extends JDialog
             if(icfg.getWildcards()!=null) parts.addAll(icfg.getWildcards());
             if(inventoryField!=null) inventoryField.setText(String.join(",", parts));
         }
+        if(r.getTriggerType()== KPWebhookPreset.TriggerType.INTERACTING && r.getInteractingConfig()!=null){
+            if(interactingOnlyPvpWildBox!=null) interactingOnlyPvpWildBox.setSelected(r.getInteractingConfig().isOnlyPvPOrWilderness());
+            if(interactingOnlyAttackableBox!=null) interactingOnlyAttackableBox.setSelected(r.getInteractingConfig().isOnlyAttackable());
+        }
     }
 
     /* ================= Save ================= */
@@ -654,6 +660,7 @@ public class KPWebhookPresetDialog extends JDialog
         KPWebhookPreset.RegionConfig regionCfg = null; // new region config
         KPWebhookPreset.InventoryConfig inventoryCfg = null; // new inventory config
         KPWebhookPreset.XpConfig xpCfg = null; // new xp drop config
+        KPWebhookPreset.InteractingConfig interactingCfg = null; // new interacting config
 
         if (trig == KPWebhookPreset.TriggerType.STAT)
         {
@@ -829,6 +836,11 @@ public class KPWebhookPresetDialog extends JDialog
                 if(inventoryCfg==null){ JOptionPane.showMessageDialog(this, "Liste over item id/navn eller wildcard kreves for dette inventory-triggeret"); return; }
             }
         }
+        else if (trig == KPWebhookPreset.TriggerType.INTERACTING){
+            boolean onlyPvpWild = interactingOnlyPvpWildBox!=null && interactingOnlyPvpWildBox.isSelected();
+            boolean onlyAttackable = interactingOnlyAttackableBox!=null && interactingOnlyAttackableBox.isSelected();
+            interactingCfg = KPWebhookPreset.InteractingConfig.builder().onlyPvPOrWilderness(onlyPvpWild).onlyAttackable(onlyAttackable).build();
+        }
 
         boolean useDef = useDefaultWebhookBox.isSelected();
         String custom = customWebhookField.getText(); if (custom == null) custom = "";
@@ -920,6 +932,7 @@ public class KPWebhookPresetDialog extends JDialog
         if(regionCfg!=null || trig== KPWebhookPreset.TriggerType.REGION) b.regionConfig(regionCfg);
         if(inventoryCfg!=null || trig== KPWebhookPreset.TriggerType.INVENTORY_FULL || trig== KPWebhookPreset.TriggerType.INVENTORY_ITEM_ADDED || trig== KPWebhookPreset.TriggerType.INVENTORY_CONTAINS_NONE) b.inventoryConfig(inventoryCfg);
         if(xpCfg!=null || trig== KPWebhookPreset.TriggerType.XP_DROP) b.xpConfig(xpCfg);
+        if(interactingCfg!=null || trig== KPWebhookPreset.TriggerType.INTERACTING) b.interactingConfig(interactingCfg);
 
         result = b.build();
         dispose();
@@ -972,6 +985,7 @@ public class KPWebhookPresetDialog extends JDialog
         else if (KPWebhookPreset.TriggerType.GEAR_CHANGED.name().equals(sel) || KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.GEAR_CHANGED.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (KPWebhookPreset.TriggerType.REGION.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.REGION.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (sel.startsWith("INVENTORY_")) { cl.show(triggerCards, "INVENTORY"); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else if (KPWebhookPreset.TriggerType.XP_DROP.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.XP_DROP.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);} else {
             String cardKey = sel;
             if (KPWebhookPreset.TriggerType.HITSPLAT_SELF.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name();
+            if (KPWebhookPreset.TriggerType.INTERACTING.name().equals(sel)) cardKey = KPWebhookPreset.TriggerType.INTERACTING.name();
             cl.show(triggerCards, cardKey);
             if (triggerDetailsPanel != null) triggerDetailsPanel.setVisible(true);
         }
@@ -1118,6 +1132,9 @@ public class KPWebhookPresetDialog extends JDialog
         regionCard = new JPanel(new GridBagLayout()); GridBagConstraints rg = new GridBagConstraints(); rg.insets=new Insets(4,4,4,4); rg.fill=GridBagConstraints.HORIZONTAL; rg.anchor=GridBagConstraints.WEST; rg.weightx=1; int rgy=0; rg.gridx=0; rg.gridy=rgy; regionCard.add(new JLabel("Region IDs"), rg); regionIdsField=new JTextField(); regionIdsField.setToolTipText("Kommaseparerte region IDs (64x64). Utled fra debug eller wiki."); rg.gridx=1; regionCard.add(regionIdsField, rg);
         // INVENTORY
         inventoryCard = new JPanel(new GridBagLayout()); GridBagConstraints icv = new GridBagConstraints(); icv.insets=new Insets(4,4,4,4); icv.fill=GridBagConstraints.HORIZONTAL; icv.anchor=GridBagConstraints.WEST; icv.weightx=1; int ivy=0; icv.gridx=0; icv.gridy=ivy; inventoryCard.add(new JLabel("Item filter"), icv); inventoryField=new JTextField(); inventoryField.setToolTipText("Kommaseparert: itemId, eksakt navn, delnavn eller *wildcard*. Tom: alle (kun for FULL / ITEM_ADDED)"); icv.gridx=1; inventoryCard.add(inventoryField, icv);
+        // INTERACTING
+        interactingCard = new JPanel(new GridBagLayout()); GridBagConstraints in = new GridBagConstraints(); in.insets=new Insets(4,4,4,4); in.fill=GridBagConstraints.HORIZONTAL; in.anchor=GridBagConstraints.WEST; in.weightx=1; int iny=0; in.gridx=0; in.gridy=iny++; in.gridwidth=2; JLabel interLbl=new JLabel("Interacting options"); interactingCard.add(interLbl,in); in.gridwidth=1; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only PvP/Wild"), in); interactingOnlyPvpWildBox=new JCheckBox(); in.gridx=1; interactingCard.add(interactingOnlyPvpWildBox,in); iny++; in.gridx=0; in.gridy=iny; interactingCard.add(new JLabel("Only attackable"), in); interactingOnlyAttackableBox=new JCheckBox(); interactingOnlyAttackableBox.setToolTipText("Krever at spilleren er innenfor lovlig combat range (PvP 15, Wildy nivå, kombinert 15+wildy)"); in.gridx=1; interactingCard.add(interactingOnlyAttackableBox,in);
+
         // NONE placeholder
         cards.add(new JPanel(), "NONE");
         cards.add(statCard, KPWebhookPreset.TriggerType.STAT.name());
@@ -1140,6 +1157,7 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(gearCard, KPWebhookPreset.TriggerType.GEAR_CHANGED.name()); // shared for TARGET_GEAR_CHANGED
         cards.add(regionCard, KPWebhookPreset.TriggerType.REGION.name());
         cards.add(inventoryCard, "INVENTORY"); // shared for inventory triggers
+        cards.add(interactingCard, KPWebhookPreset.TriggerType.INTERACTING.name());
 
         return cards;
     }
