@@ -22,6 +22,8 @@ public class KPWebhookPanel extends PluginPanel {
     private final JButton debugPresetsBtn = new JButton("Debug Presets");
     // Track category expanded states so refreshes don't auto-expand everything
     private final Map<String, Boolean> categoryExpandedStates = new HashMap<>();
+    // Added: stripe index for alternating row colors
+    private int stripeIndex = 0;
     // Stretch panel tracks viewport width without transient re-layout artifacts
     private static class StretchPanel extends JPanel implements Scrollable {
         @Override public Dimension getPreferredScrollableViewportSize(){ return getPreferredSize(); }
@@ -280,6 +282,7 @@ public class KPWebhookPanel extends PluginPanel {
     }
     public void refreshTable(){
         stopSecondTimer();
+        stripeIndex = 0; // reset striping each full rebuild
         // Capture current expanded states before wiping and persist externally
         for(Component c: listContainer.getComponents()){
             if(c instanceof CategorySection){
@@ -359,8 +362,8 @@ public class KPWebhookPanel extends PluginPanel {
         // Provide a preferred height only (width will be stretched by BoxLayout via max size and listContainer width override)
         row.setPreferredSize(new Dimension(0, ROW_HEIGHT+4));
         Color activeGreen=new Color(40,160,60); Color inactiveBar=new Color(55,55,55);
-        Color base = UIManager.getColor("Panel.background"); if(base==null) base=new Color(45,45,45);
-        row.setOpaque(true); row.setBackground(new Color(base.getRed(), base.getGreen(), base.getBlue())); row.setBorder(new EmptyBorder(2,0,2,4));
+        // Make inner row transparent so outer colored panel shows fully
+        row.setOpaque(false); row.setBorder(new EmptyBorder(2,0,2,4));
         JPanel indicator=new JPanel(); indicator.setPreferredSize(new Dimension(IND_W, ROW_HEIGHT)); indicator.setBackground(preset.isActive()?activeGreen:inactiveBar); indicator.setOpaque(true); row.add(indicator, BorderLayout.WEST);
         String titleText = preset.getTitle()!=null? preset.getTitle():"(no title)"; JLabel titleLbl=new JLabel(titleText); titleLbl.setFont(FontManager.getRunescapeFont().deriveFont(Font.PLAIN,15f)); titleLbl.setForeground(preset.isActive()?new Color(225,225,225):new Color(150,150,150)); titleLbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)); titleLbl.addMouseListener(new MouseAdapter(){ @Override public void mouseClicked(MouseEvent e){ if(SwingUtilities.isLeftMouseButton(e)&&e.getClickCount()==2) openDialog(preset); }});
         JPanel center=new JPanel(); center.setLayout(new BoxLayout(center, BoxLayout.X_AXIS)); center.setOpaque(false); center.setBorder(new EmptyBorder(0,4,0,0)); center.add(titleLbl);
@@ -380,17 +383,38 @@ public class KPWebhookPanel extends PluginPanel {
             @Override public void mouseDragged(MouseEvent e){ if(dragState.preset!=preset) return; Point pScreen=e.getLocationOnScreen(); if(dragState.start!=null && !dragState.active){ Point now=e.getPoint(); if(now.distance(dragState.start)>5){ dragState.active=true; ensureGlassPane(); if(dragGlassPane!=null){ dragGlassPane.text=preset.getTitle()!=null? preset.getTitle():"(no title)"; dragGlassPane.img=dragState.ghostImg; } } } if(dragState.active){ dragState.current=pScreen; updateHoverCategory(pScreen); updateGhost(); } }
             @Override public void mouseReleased(MouseEvent e){ if(dragState.active){ commitDrag(); } resetDrag(); }
         }; for(JComponent c:new JComponent[]{row,center,titleLbl,indicator}){ c.addMouseListener(dragAdapter); c.addMouseMotionListener(dragAdapter);}
-        // Common border wrapper for clearer grouping (including last-triggered label if present)
-        Color borderColor = new Color(70,70,70); // subtle
+        // Alternating background colors for outer frame
+        Color base1 = new Color(55,55,55,180);
+        Color base2 = new Color(45,45,45,180);
+        Color activeOverlay = new Color(60,90,60,90); // subtle green tint overlay for active presets (blended)
+        boolean useAlt = (stripeIndex % 2)==1;
+        Color chosen = useAlt? base2 : base1;
+        // Common border & filled background
+        Color borderColor = new Color(65,65,65);
+        JPanel outer = new JPanel(); outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS)); outer.setOpaque(true); outer.setAlignmentX(Component.LEFT_ALIGNMENT); outer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(borderColor,1,true), new EmptyBorder(2,4,2,4)));
+        // Build content (with or without last-triggered line)
         if(plugin.isShowLastTriggered() && preset.isActive()){
-            JLabel lastLbl = new CrispLabel(formatLastTriggered(preset.getLastTriggeredAt())); lastLbl.setFont(standardFont(11f,false)); lastLbl.setForeground(new Color(175,175,175)); lastLbl.setBorder(new EmptyBorder(0,8,2,0)); lastTriggeredLabels.put(preset.getId(), lastLbl);
+            JLabel lastLbl = new CrispLabel(formatLastTriggered(preset.getLastTriggeredAt())); lastLbl.setFont(standardFont(11f,false)); lastLbl.setForeground(new Color(185,185,185)); lastLbl.setBorder(new EmptyBorder(0,8,2,0)); lastTriggeredLabels.put(preset.getId(), lastLbl);
             JPanel holder=new JPanel(new BorderLayout()); holder.setOpaque(false); holder.add(row, BorderLayout.CENTER); holder.setAlignmentX(Component.LEFT_ALIGNMENT); holder.setMaximumSize(new Dimension(Integer.MAX_VALUE, ROW_HEIGHT+4));
             JPanel below=new JPanel(); below.setLayout(new BoxLayout(below, BoxLayout.X_AXIS)); below.setOpaque(false); below.add(lastLbl); below.add(Box.createHorizontalGlue()); below.setAlignmentX(Component.LEFT_ALIGNMENT); below.setMaximumSize(new Dimension(Integer.MAX_VALUE, lastLbl.getPreferredSize().height+4));
             JPanel wrap=new JPanel(); wrap.setLayout(new BoxLayout(wrap, BoxLayout.Y_AXIS)); wrap.setOpaque(false); wrap.add(holder); wrap.add(below); wrap.setAlignmentX(Component.LEFT_ALIGNMENT); wrap.setMaximumSize(new Dimension(Integer.MAX_VALUE, holder.getPreferredSize().height + below.getPreferredSize().height));
-            JPanel outer = new JPanel(); outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS)); outer.setOpaque(false); outer.setAlignmentX(Component.LEFT_ALIGNMENT); outer.add(wrap); outer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(borderColor,1,true), new EmptyBorder(2,2,2,2))); outer.setMaximumSize(new Dimension(Integer.MAX_VALUE, wrap.getMaximumSize().height+4));
-            return outer;
+            outer.add(wrap);
+        } else {
+            outer.add(row);
         }
-        JPanel outer = new JPanel(); outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS)); outer.setOpaque(false); outer.setAlignmentX(Component.LEFT_ALIGNMENT); outer.add(row); outer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(borderColor,1,true), new EmptyBorder(2,2,2,2))); outer.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getMaximumSize().height+4));
+        // Apply background after constructing to maybe blend active tint
+        if(preset.isActive()){
+            // Blend chosen with active overlay manually (simple average)
+            int r=(chosen.getRed()+activeOverlay.getRed())/2;
+            int g=(chosen.getGreen()+activeOverlay.getGreen())/2;
+            int b=(chosen.getBlue()+activeOverlay.getBlue())/2;
+            outer.setBackground(new Color(r,g,b, chosen.getAlpha()));
+        } else {
+            outer.setBackground(chosen);
+        }
+        // Increment stripe counter for next preset
+        stripeIndex++;
+        outer.setMaximumSize(new Dimension(Integer.MAX_VALUE, outer.getPreferredSize().height+4));
         return outer;
     }
 
