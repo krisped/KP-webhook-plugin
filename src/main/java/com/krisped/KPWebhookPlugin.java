@@ -592,6 +592,22 @@ public class KPWebhookPlugin extends Plugin {
         if(cfg.getCombatRange()!=null){ try { Player local = client.getLocalPlayer(); if(local!=null){ int diff = Math.abs(local.getCombatLevel()-p.getCombatLevel()); return diff <= cfg.getCombatRange(); } } catch(Exception ignored){} }
         return false; }
 
+    // === Helper matchers for animation / graphic triggers (added) ===
+    private boolean matchesAnimation(KPWebhookPreset.AnimationConfig cfg, int animId){
+        if(animId < 0) return false; // ignore idle / none
+        if(cfg==null) return true; // no filter => any
+        if(cfg.getAnimationId()!=null && cfg.getAnimationId()==animId) return true;
+        if(cfg.getAnimationIds()!=null){ for(Integer i: cfg.getAnimationIds()){ if(i!=null && i==animId) return true; } }
+        return cfg.getAnimationId()==null && (cfg.getAnimationIds()==null || cfg.getAnimationIds().isEmpty()); // treat empty as any
+    }
+    private boolean matchesGraphic(KPWebhookPreset.GraphicConfig cfg, int graphicId){
+        if(graphicId < 0) return false;
+        if(cfg==null) return true;
+        if(cfg.getGraphicId()!=null && cfg.getGraphicId()==graphicId) return true;
+        if(cfg.getGraphicIds()!=null){ for(Integer i: cfg.getGraphicIds()){ if(i!=null && i==graphicId) return true; } }
+        return cfg.getGraphicId()==null && (cfg.getGraphicIds()==null || cfg.getGraphicIds().isEmpty());
+    }
+
     private void applyPresetOverheadTexts(KPWebhookPreset rule, Map<String,String> ctx){ if(rule==null) return; try { // OVER text
             if(rule.getTextOver()!=null && !rule.getTextOver().isBlank()) addConfiguredOverheadText(rule, rule.getTextOver(), "Above", rule.getTextOverColor(), rule.getTextOverBlink(), rule.getTextOverDuration(), rule.getTextOverSize(), rule.getTextOverBold(), rule.getTextOverItalic(), rule.getTextOverUnderline(), ActiveOverheadText.TargetType.LOCAL_PLAYER, ctx);
             if(rule.getTextUnder()!=null && !rule.getTextUnder().isBlank()) addConfiguredOverheadText(rule, rule.getTextUnder(), "Under", rule.getTextUnderColor(), rule.getTextUnderBlink(), rule.getTextUnderDuration(), rule.getTextUnderSize(), rule.getTextUnderBold(), rule.getTextUnderItalic(), rule.getTextUnderUnderline(), ActiveOverheadText.TargetType.LOCAL_PLAYER, ctx);
@@ -674,6 +690,56 @@ public class KPWebhookPlugin extends Plugin {
         } catch(Exception e){ log.warn("Action line error: {}", line, e); }
     }
 
+    // === Animation & Graphic event handling (added) ===
+    @Subscribe
+    public void onAnimationChanged(AnimationChanged ev){
+        if(ev==null) return; Actor a = ev.getActor(); if(a==null) return; int animId; try { animId = a.getAnimation(); } catch(Exception e){ return; }
+        boolean self = false; boolean target = false;
+        try { Player local = client.getLocalPlayer(); if(local!=null && a==local) self=true; } catch(Exception ignored){}
+        target = (a==currentTarget);
+        if(debugWindow!=null && debugWindow.isVisible()){
+            try { debugWindow.logAnimation(a, self, target, animId); } catch(Exception ignored){}
+        }
+        if(animId < 0) return; // ignore none
+        for(KPWebhookPreset r: rules){ if(r==null || !r.isActive()) continue; KPWebhookPreset.TriggerType tt = r.getTriggerType();
+            if(tt!=KPWebhookPreset.TriggerType.ANIMATION_SELF && tt!=KPWebhookPreset.TriggerType.ANIMATION_TARGET && tt!=KPWebhookPreset.TriggerType.ANIMATION_ANY) continue;
+            boolean idMatch = matchesAnimation(r.getAnimationConfig(), animId);
+            boolean cond=false;
+            if(tt==KPWebhookPreset.TriggerType.ANIMATION_SELF) cond = self && idMatch;
+            else if(tt==KPWebhookPreset.TriggerType.ANIMATION_TARGET) cond = target && idMatch;
+            else if(tt==KPWebhookPreset.TriggerType.ANIMATION_ANY) cond = idMatch; // any actor
+            if(r.isForceCancelOnChange()){
+                if(cond){ if(!r.isLastConditionMet()){ executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), (a instanceof Player)?(Player)a:null, (a instanceof NPC)?(NPC)a:null); r.setLastConditionMet(true); savePreset(r); } }
+                else if(r.isLastConditionMet()){ r.setLastConditionMet(false); softCancelOnChange(r); savePreset(r); }
+            } else if(cond){ executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), (a instanceof Player)?(Player)a:null, (a instanceof NPC)?(NPC)a:null); }
+        }
+    }
+
+    @Subscribe
+    public void onGraphicChanged(GraphicChanged ev){
+        if(ev==null) return; Actor a = ev.getActor(); if(a==null) return; int graphicId; try { graphicId = a.getGraphic(); } catch(Exception e){ return; }
+        boolean self=false; boolean target=false;
+        try { Player local = client.getLocalPlayer(); if(local!=null && a==local) self=true; } catch(Exception ignored){}
+        target = (a==currentTarget);
+        if(debugWindow!=null && debugWindow.isVisible()){
+            try { debugWindow.logGraphic(a, self, target, graphicId); } catch(Exception ignored){}
+        }
+        if(graphicId < 0) return;
+        for(KPWebhookPreset r: rules){ if(r==null || !r.isActive()) continue; KPWebhookPreset.TriggerType tt = r.getTriggerType();
+            if(tt!=KPWebhookPreset.TriggerType.GRAPHIC_SELF && tt!=KPWebhookPreset.TriggerType.GRAPHIC_TARGET && tt!=KPWebhookPreset.TriggerType.GRAPHIC_ANY) continue;
+            boolean idMatch = matchesGraphic(r.getGraphicConfig(), graphicId);
+            boolean cond=false;
+            if(tt==KPWebhookPreset.TriggerType.GRAPHIC_SELF) cond = self && idMatch;
+            else if(tt==KPWebhookPreset.TriggerType.GRAPHIC_TARGET) cond = target && idMatch;
+            else if(tt==KPWebhookPreset.TriggerType.GRAPHIC_ANY) cond = idMatch;
+            if(r.isForceCancelOnChange()){
+                if(cond){ if(!r.isLastConditionMet()){ executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), (a instanceof Player)?(Player)a:null, (a instanceof NPC)?(NPC)a:null); r.setLastConditionMet(true); savePreset(r); } }
+                else if(r.isLastConditionMet()){ r.setLastConditionMet(false); softCancelOnChange(r); savePreset(r); }
+            } else if(cond){ executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), (a instanceof Player)?(Player)a:null, (a instanceof NPC)?(NPC)a:null); }
+        }
+    }
+
+    // === Webhook + helpers (restored) ===
     private void postWebhook(KPWebhookPreset rule, String body, Map<String,String> ctx){ String url = rule.getWebhookUrl(); if(url==null || url.isBlank()) return; String payload = body==null?"": body; if(tokenService!=null) payload = tokenService.expand(payload, ctx); try {
             RequestBody rb = RequestBody.create(JSON, payload); Request r = new Request.Builder().url(url).post(rb).build(); okHttpClient.newCall(r).enqueue(new Callback(){ public void onFailure(Call call, IOException e){ } public void onResponse(Call call, Response response){ try(response){} catch(Exception ignored){} }});
         } catch(Exception ignored){} }
@@ -687,42 +753,11 @@ public class KPWebhookPlugin extends Plugin {
     private boolean isMostlyBlack(BufferedImage img){ if(img==null) return true; int w=img.getWidth(), h=img.getHeight(); long dark=0, total=0; for(int y=0; y<h; y+=10){ for(int x=0; x<w; x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255, g=(rgb>>8)&255, b=rgb&255; int lum=(r+g+b)/3; if(lum<15) dark++; total++; } } return total>0 && dark*1.0/total > 0.85; }
     private boolean isMostlyWhite(BufferedImage img){ if(img==null) return false; int w=img.getWidth(), h=img.getHeight(); long light=0, total=0; for(int y=0; y<h; y+=10){ for(int x=0; x<w; x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255, g=(rgb>>8)&255, b=rgb&255; int lum=(r+g+b)/3; if(lum>240) light++; total++; } } return total>0 && light*1.0/total > 0.85; }
 
-    // === Public UI actions (added) ===
-    public void openDebugWindow(){
-        try {
-            if(debugWindow==null || !debugWindow.isDisplayable()){
-                debugWindow = new KPWebhookDebugWindow(this);
-            }
-            debugWindow.setVisible(true);
-            try { debugWindow.toFront(); } catch(Exception ignored){}
-        } catch(Exception ignored){}
-    }
-    public void openPresetDebugWindow(){
-        try {
-            if(presetDebugWindow==null || !presetDebugWindow.isDisplayable()){
-                presetDebugWindow = new KPWebhookPresetDebugWindow();
-            }
-            presetDebugWindow.setVisible(true);
-            try { presetDebugWindow.toFront(); } catch(Exception ignored){}
-        } catch(Exception ignored){}
-    }
-    public void manualSend(int id){
-        KPWebhookPreset r = find(id);
-        if(r==null) return;
-        try { if(debugWindow!=null && debugWindow.isVisible()){ debugWindow.logManual(r.getId(), r.getTitle()); } } catch(Exception ignored){}
-        executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
-    }
-
-    // Expose default webhook URL (trim blank -> null)
-    public String getDefaultWebhook(){
-        try {
-            if(config!=null){
-                String v = config.defaultWebhookUrl();
-                if(v!=null){ v = v.trim(); if(!v.isEmpty()) return v; }
-            }
-        } catch(Exception ignored){}
-        return null;
-    }
+    // === Public UI actions ===
+    public void openDebugWindow(){ try { if(debugWindow==null || !debugWindow.isDisplayable()){ debugWindow = new KPWebhookDebugWindow(this); } debugWindow.setVisible(true); try { debugWindow.toFront(); } catch(Exception ignored){} } catch(Exception ignored){} }
+    public void openPresetDebugWindow(){ try { if(presetDebugWindow==null || !presetDebugWindow.isDisplayable()){ presetDebugWindow = new KPWebhookPresetDebugWindow(); } presetDebugWindow.setVisible(true); try { presetDebugWindow.toFront(); } catch(Exception ignored){} } catch(Exception ignored){} }
+    public void manualSend(int id){ KPWebhookPreset r = find(id); if(r==null) return; try { if(debugWindow!=null && debugWindow.isVisible()){ debugWindow.logManual(r.getId(), r.getTitle()); } } catch(Exception ignored){} executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig()); }
+    public String getDefaultWebhook(){ try { if(config!=null){ String v = config.defaultWebhookUrl(); if(v!=null){ v = v.trim(); if(!v.isEmpty()) return v; } } } catch(Exception ignored){} return null; }
 
     private Color parseColor(String hex, Color fallback){ if(hex==null||hex.isBlank()) return fallback; try { return Color.decode(hex.trim()); } catch(Exception ignored){ return fallback; } }
 }
