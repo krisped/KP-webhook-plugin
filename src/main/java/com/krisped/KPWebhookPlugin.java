@@ -55,8 +55,8 @@ import net.runelite.api.WorldType; // added for PvP world detection
 @Slf4j
 @PluginDescriptor(
         name = "KP Webhook",
-        description = "Triggers: MANUAL, STAT, XP_DROP, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET, IDLE, GEAR_CHANGED, TARGET_GEAR_CHANGED, REGION, INVENTORY_FULL, INVENTORY_ITEM_ADDED, INVENTORY_ITEM_REMOVED, INVENTORY_CONTAINS_NONE, LOOT_DROP, DEATH, INTERACTING. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, MARK_TILE, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP, TOGGLEPRESET, TOGGLEGROUP.",
-        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile","idle","gear","region","inventory","loot","death","xp","interacting"}
+        description = "Triggers: MANUAL, STAT, XP_DROP, WIDGET_SPAWN, PLAYER_SPAWN, PLAYER_DESPAWN, NPC_SPAWN, NPC_DESPAWN, ANIMATION_SELF, ANIMATION_TARGET, ANIMATION_ANY, GRAPHIC_SELF, GRAPHIC_TARGET, GRAPHIC_ANY, PROJECTILE_SELF, PROJECTILE_TARGET, PROJECTILE_ANY, HITSPLAT_SELF, HITSPLAT_TARGET, MESSAGE, VARBIT, VARPLAYER, TICK, TARGET, IDLE, GEAR_CHANGED, TARGET_GEAR_CHANGED, REGION, INVENTORY_FULL, INVENTORY_ITEM_ADDED, INVENTORY_ITEM_REMOVED, INVENTORY_CONTAINS_NONE, LOOT_DROP, ITEM_SPAWN, DEATH, INTERACTING. Commands: NOTIFY, CUSTOM_MESSAGE, WEBHOOK, SCREENSHOT, HIGHLIGHT_*, MARK_TILE, TEXT_*, OVERLAY_TEXT, SLEEP, TICK, STOP, TOGGLEPRESET, TOGGLEGROUP.",
+        tags = {"webhook","stat","trigger","screenshot","widget","highlight","text","player","npc","varbit","varplayer","tick","overlay","target","graphic","hitsplat","projectile","idle","gear","region","inventory","loot","item","death","xp","interacting"}
 )
 public class KPWebhookPlugin extends Plugin {
     // Anti-spam cache for heavy commands in TICK presets
@@ -100,6 +100,7 @@ public class KPWebhookPlugin extends Plugin {
     // New: track last logged values for debug window (separate from baseline) to avoid spam
     private final Map<Skill,Integer> lastLoggedRealLevel = new EnumMap<>(Skill.class);
     private final Map<Skill,Integer> lastLoggedBoostedLevel = new EnumMap<>(Skill.class);
+    private final Map<Skill,Integer> lastLoggedXp = new EnumMap<>(Skill.class); // new: track previous XP for XP_DROP debug
     private BufferedImage lastFrame; private volatile long lastScreenshotRequestMs = 0; private static final long SCREENSHOT_COOLDOWN_MS = 800;
 
     // Target tracking
@@ -133,15 +134,15 @@ public class KPWebhookPlugin extends Plugin {
     private java.util.concurrent.ScheduledFuture<?> lastTriggeredRefreshFuture; // periodic refresh task
 
     // Overhead texts
-    @Data public static class ActiveOverheadText { String text; Color color; boolean blink; int size; String position; int remainingTicks; boolean visiblePhase; int blinkCounter; int blinkInterval; boolean bold; boolean italic; boolean underline; String key; boolean persistent; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS, PLAYER_SPAWN, INTERACTION } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
+    @Data public static class ActiveOverheadText { String text; Color color; boolean blink; int size; String position; int remainingTicks; boolean visiblePhase; int blinkCounter; int blinkInterval; boolean bold; boolean italic; boolean underline; String key; boolean persistent; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS, PLAYER_SPAWN, INTERACTION, ITEM_SPAWN } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
     private final List<ActiveOverheadText> overheadTexts = new ArrayList<>(); public List<ActiveOverheadText> getOverheadTexts(){ return overheadTexts; }
 
     // Overhead images
-    @Data public static class ActiveOverheadImage { BufferedImage image; int itemOrSpriteId; boolean sprite; String position; int remainingTicks; boolean persistent; boolean blink; int blinkCounter; int blinkInterval=2; boolean visiblePhase=true; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS, PLAYER_SPAWN, INTERACTION } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
+    @Data public static class ActiveOverheadImage { BufferedImage image; int itemOrSpriteId; boolean sprite; String position; int remainingTicks; boolean persistent; boolean blink; int blinkCounter; int blinkInterval=2; boolean visiblePhase=true; int ruleId=-1; public enum TargetType { LOCAL_PLAYER, PLAYER_NAME, NPC_NAME, NPC_ID, TARGET, FRIEND_LIST, IGNORE_LIST, PARTY_MEMBERS, FRIENDS_CHAT, TEAM_MEMBERS, CLAN_MEMBERS, OTHERS, PLAYER_SPAWN, INTERACTION, ITEM_SPAWN } TargetType targetType=TargetType.LOCAL_PLAYER; Set<String> targetNames; Set<Integer> targetIds; }
     private final List<ActiveOverheadImage> overheadImages = new ArrayList<>(); public List<ActiveOverheadImage> getOverheadImages(){ return overheadImages; }
 
     // Flag controlling whether to bypass legacy player spawn handlers (kept false to preserve original behavior)
-    @SuppressWarnings("unused") private static final boolean delegatePlayerSpawnHandling = false;
+    @SuppressWarnings("unused") private static final boolean delegatePlayerSpawnHandling = true; // now handled by PlayerTriggerService
 
     // Sequencing
     private enum PendingType { ACTION, TICK_DELAY, SLEEP_DELAY }
@@ -170,6 +171,7 @@ public class KPWebhookPlugin extends Plugin {
         nextId = 0; for (KPWebhookPreset r: rules) if (r.getId()>=nextId) nextId=r.getId()+1; // repair any invalid / duplicate ids
         ensureUniqueIds(); panel.refreshTable();
         try { if(playerTriggerService!=null) playerTriggerService.setPlugin(this); } catch(Exception ignored){}
+        // removed npcTriggerService.setPlugin call (handled directly in plugin now)
         try { com.krisped.triggers.stat.StatTriggerHelper.initializeBaselines(client, rules); } catch(Exception ignored){}
         scheduleLastTriggeredRefresh();
     }
@@ -190,6 +192,26 @@ public class KPWebhookPlugin extends Plugin {
                 }
             } catch(Exception ignored){}
         }, useInterval, useInterval, java.util.concurrent.TimeUnit.SECONDS);
+    }
+    // Added: ensure uniqueness of rule IDs after loading from storage (handles duplicates / negative ids)
+    private void ensureUniqueIds(){
+        if(rules.isEmpty()) return;
+        Set<Integer> used = new HashSet<>();
+        int max = -1;
+        for(KPWebhookPreset r : rules){
+            if(r==null) continue;
+            int id = r.getId();
+            if(id < 0 || used.contains(id)){
+                // find next free id
+                while(used.contains(nextId)) nextId++;
+                r.setId(nextId++);
+            }
+            used.add(r.getId());
+            if(r.getId() > max) max = r.getId();
+        }
+        if(nextId <= max) nextId = max + 1;
+        // Persist any id corrections
+        try { saveAllPresets(); } catch(Exception ignored){}
     }
     private void captureInitialRealLevels(){ for (Skill s: Skill.values()){ try { lastRealLevel.put(s, client.getRealSkillLevel(s)); } catch(Exception ignored){} } }
 
@@ -225,6 +247,34 @@ public class KPWebhookPlugin extends Plugin {
     private void savePreset(KPWebhookPreset p, String previousTitle){ if(storage!=null && p!=null) storage.save(p, previousTitle); }
     private void saveAllPresets(){ if(storage!=null) for(KPWebhookPreset p: rules) storage.save(p,null); }
 
+    // === User settings accessors ===
+    public boolean isShowLastTriggered(){
+        try { if(userSettings!=null) return userSettings.isShowLastTriggered(); } catch(Exception ignored){}
+        // Fallback to legacy config (one-way migrated already, but keep for safety)
+        try { if(config!=null) return config.showLastTriggered(); } catch(Exception ignored){}
+        return false;
+    }
+    public void setShowLastTriggered(boolean v){
+        try { if(userSettings!=null){ userSettings.setShowLastTriggered(v); userSettings.save(); } } catch(Exception ignored){}
+        // Reschedule to apply new interval logic (or stop refresh if disabled)
+        try { scheduleLastTriggeredRefresh(); } catch(Exception ignored){}
+    }
+    public Map<String,Boolean> getCategoryExpandedStates(){
+        try { if(userSettings!=null && userSettings.getCategoryExpandedStates()!=null) return userSettings.getCategoryExpandedStates(); } catch(Exception ignored){}
+        return Collections.emptyMap();
+    }
+    public void setCategoryExpandedState(String key, boolean expanded){
+        if(key==null) return;
+        try {
+            if(userSettings!=null){
+                Map<String,Boolean> map = userSettings.getCategoryExpandedStates();
+                if(map==null){ map = new HashMap<>(); userSettings.setCategoryExpandedStates(map); }
+                map.put(key, expanded);
+                userSettings.save();
+            }
+        } catch(Exception ignored){}
+    }
+
     // Stop rule cleanup
     private void stopRule(int ruleId){ cancelSequencesForRule(ruleId); removeOverheadsForRule(ruleId,true); removePersistentOverheadsForRule(ruleId); try{highlightManager.removeAllByRule(ruleId);}catch(Exception ignored){} overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); try { overlayTextManager.removeByRule(ruleId);} catch(Exception ignored){} try{ if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(ruleId);}catch(Exception ignored){} markTileManager.removeByRule(ruleId); tickRulePersistentCommands.remove(ruleId); }
 
@@ -239,7 +289,8 @@ public class KPWebhookPlugin extends Plugin {
     public void savePresetPublic(KPWebhookPreset r){ savePreset(r); }
     public void executeStatRule(KPWebhookPreset r, Skill skill, int real){ executeRule(r, skill, real, r.getStatConfig(), r.getWidgetConfig()); }
     public void executeXpRule(KPWebhookPreset r, Skill skill, int totalXp){ executeRule(r, skill, totalXp, null, r.getWidgetConfig()); } // new XP helper
-
+    public void executeNpcTrigger(KPWebhookPreset r, NPC npc){ if(r==null || npc==null) return; executeRule(r,null,-1,null,null,null,npc); } // consolidated npc wrapper
+    public void executePlayerTrigger(KPWebhookPreset r, Player p){ if(r==null || p==null) return; executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), p, null); }
     // === Restored executeRule overloads & baseContext for trigger execution ===
     private void executeRule(KPWebhookPreset rule, Skill skill, int value, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg){ executeRule(rule,skill,value,statCfg,widgetCfg,null,null); }
     private void executeRule(KPWebhookPreset rule, Skill skill, int value, KPWebhookPreset.StatConfig statCfg, KPWebhookPreset.WidgetConfig widgetCfg, Player other){ executeRule(rule,skill,value,statCfg,widgetCfg,other,null); }
@@ -270,9 +321,10 @@ public class KPWebhookPlugin extends Plugin {
         if(ev==null) return;
         if(client.getGameState()!=GameState.LOGGED_IN) return; // ignore pre-login zeros
         Skill skill = ev.getSkill();
-        int real; int boosted;
+        int real; int boosted; int currentXp=-1;
         try { real = client.getRealSkillLevel(skill); } catch(Exception e){ real = ev.getLevel(); }
         try { boosted = client.getBoostedSkillLevel(skill); } catch(Exception e){ boosted = real; }
+        try { currentXp = client.getSkillExperience(skill); } catch(Exception ignored){}
         if(real<=0 && boosted<=0) return; // ignore zero updates
         lastRealLevel.put(skill, real);
         if(debugWindow!=null && debugWindow.isVisible()){
@@ -281,6 +333,10 @@ public class KPWebhookPlugin extends Plugin {
                 try { debugWindow.logStat(skill.name(), real, boosted); } catch(Exception ignored){}
                 lastLoggedRealLevel.put(skill, real); lastLoggedBoostedLevel.put(skill, boosted);
             }
+            // XP drop logging (only when gain >0)
+            if(currentXp>0){ Integer prevXp = lastLoggedXp.get(skill); if(prevXp!=null && currentXp>prevXp){ int gained=currentXp-prevXp; try { debugWindow.logXpDrop(skill.name(), gained); } catch(Exception ignored){} } lastLoggedXp.put(skill, currentXp); }
+        } else { // still advance xp baseline even if debug window hidden
+            if(currentXp>0){ lastLoggedXp.put(skill, currentXp); }
         }
         if(statTriggerService!=null){ try { statTriggerService.process(ev, rules, this); } catch(Exception e){ log.warn("Stat trigger processing error", e); } }
         if(xpDropTriggerService!=null){ try { xpDropTriggerService.process(ev, rules, this); } catch(Exception e){ log.warn("XP drop trigger processing error", e); } } // new XP processing
@@ -492,177 +548,181 @@ public class KPWebhookPlugin extends Plugin {
     }
     @Subscribe public void onPlayerDespawned(PlayerDespawned ev){ if(delegatePlayerSpawnHandling) return; if(ev==null) return; Player p=ev.getPlayer(); if(p==null) return; try{ if(tokenService!=null) tokenService.updatePlayerSpawnToken(p,true); }catch(Exception ignored){} boolean self = client.getLocalPlayer()==p; String name=sanitizePlayerName(p.getName()); interactingPlayers.remove(name.toLowerCase(Locale.ROOT)); if(debugWindow!=null && debugWindow.isVisible()){ try{ int localCombat=0; try{ if(client.getLocalPlayer()!=null) localCombat=client.getLocalPlayer().getCombatLevel(); }catch(Exception ignored){} debugWindow.logPlayerSpawn(true,name,p.getCombatLevel(), localCombat); }catch(Exception ignored){} }
         for(KPWebhookPreset r: rules){ if(!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.PLAYER_DESPAWN){ if(playerMatches(r.getPlayerConfig(), p, self)) executeRule(r,null,-1,null,null,p); } } }
-    // New INTERACTING trigger handler
-    @Subscribe public void onInteractingChanged(InteractingChanged ev){ if(ev==null) return; Actor src=ev.getSource(); Actor tgt=ev.getTarget(); Player local; try { local=client.getLocalPlayer(); } catch(Exception e){ return; } if(local==null) return;
-        // New: fire TARGET trigger immediately when local player starts interacting with an attackable actor
-        if(src==local){
-            if(tgt!=null && isAttackable(tgt)){
-                Actor old=currentTarget;
-                if(currentTarget!=tgt){
-                    currentTarget=tgt; lastTargetAnimationId=currentTarget.getAnimation(); try { lastTargetGraphicId=currentTarget.getGraphic(); } catch(Exception ignored){ lastTargetGraphicId=-1; }
-                    targetLastActiveTick=gameTickCounter;
-                    fireTargetChangeTriggers(old, currentTarget);
-                } else {
-                    // refresh activity tick so retention does not drop early
-                    targetLastActiveTick=gameTickCounter;
-                }
-            }
-            // continue processing for remote players / NPCs
-        }
-        // Support INTERACTING trigger for NPC sources when enabled
-        if(src instanceof NPC){
-            if(tgt==local){
-                NPC npc=(NPC)src;
-                for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.INTERACTING){
-                        KPWebhookPreset.InteractingConfig ic = r.getInteractingConfig(); if(ic==null || !ic.isEnableNpc()) continue; // NPC not enabled
-                        if(ic.isOnlyPvPOrWilderness() && !(isInWilderness() || isPvPWorld())) continue; // area filter
-                        // onlyAttackable ignored for NPC (always attackable by definition here)
-                        if(r.isForceCancelOnChange() && r.isLastConditionMet()) softCancelOnChange(r);
-                        executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), null, npc); r.setLastConditionMet(true); savePreset(r);
-                    } }
-            }
-            return; // NPC handling finished
-        }
-        if(!(src instanceof Player)) return; Player other=(Player)src; if(other==local) return; String norm = sanitizePlayerName(other.getName()).toLowerCase(Locale.ROOT); boolean now= tgt==local; boolean was=interactingPlayers.contains(norm); if(now && !was){ interactingPlayers.add(norm); try { if(tokenService!=null) tokenService.updateInteraction(other); } catch(Exception ignored){} for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.INTERACTING){ // apply optional player filter (names/combat range)
-                    if(!playerMatches(r.getPlayerConfig(), other, false)) continue; KPWebhookPreset.InteractingConfig ic = r.getInteractingConfig(); if(ic!=null){ if(ic.isOnlyPvPOrWilderness() && !(isInWilderness() || isPvPWorld())) continue; if(ic.isOnlyAttackable() && !isAttackablePerRules(local, other)) continue; }
-                    if(r.isForceCancelOnChange() && r.isLastConditionMet()) softCancelOnChange(r); executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig(), other, null); r.setLastConditionMet(true); savePreset(r); } } } else if(!now && was){ interactingPlayers.remove(norm); for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.INTERACTING && r.isForceCancelOnChange() && r.isLastConditionMet()){ softCancelOnChange(r); r.setLastConditionMet(false); savePreset(r); } } } }
-    private void addOverheadTextFromPreset(String text,String pos,KPWebhookPreset rule){
-        if(text==null||text.isBlank()||rule==null) return;
-        if(rule.isForceCancelOnChange()){
-            try { removeOverheadsForRule(rule.getId(), true); } catch(Exception ignored){}
-        }
-        ActiveOverheadText ot=new ActiveOverheadText();
-        ot.text=text; ot.position=pos; ot.ruleId=rule.getId(); ot.color=Color.WHITE; ot.size=16; ot.remainingTicks=80;
-        overheadTexts.add(ot);
-    }
-    public void addOverheadText(KPWebhookPreset rule,String text,String pos){
-        if(rule!=null){
-            if(rule.isForceCancelOnChange()){
-                try { removeOverheadsForRule(rule.getId(), true); } catch(Exception ignored){}
-            }
-            addOverheadTextFromPreset(text,pos!=null?pos:"Above",rule); return;
-        }
-        ActiveOverheadText ot=new ActiveOverheadText(); ot.text=text; ot.position=pos!=null?pos:"Above"; ot.remainingTicks=80; overheadTexts.add(ot);
+    @Subscribe public void onNpcSpawned(NpcSpawned ev){ if(ev==null) return; NPC npc=ev.getNpc(); if(npc==null) return; logNpcSpawn(false, npc); for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.NPC_SPAWN){ if(npcMatches(r.getNpcConfig(), npc)) executeNpcTrigger(r, npc); } } }
+    @Subscribe public void onNpcDespawned(NpcDespawned ev){ if(ev==null) return; NPC npc=ev.getNpc(); if(npc==null) return; logNpcSpawn(true, npc); for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; if(r.getTriggerType()== KPWebhookPreset.TriggerType.NPC_DESPAWN){ if(npcMatches(r.getNpcConfig(), npc)) executeNpcTrigger(r, npc); } } }
+    // === ITEM_SPAWN (ground item) ===
+    @Subscribe public void onItemSpawned(ItemSpawned ev){ if(ev==null) return; TileItem ti=ev.getItem(); if(ti==null) return; int itemId=ti.getId(); int qty=ti.getQuantity(); String nm=""; try { nm=itemManager.getItemComposition(itemId).getName(); } catch(Exception ignored){}
+        try { if(tokenService!=null){ net.runelite.api.Tile tile = ev.getTile(); net.runelite.api.coords.WorldPoint wp = tile!=null? tile.getWorldLocation(): null; tokenService.updateLastItemSpawn(nm, wp); } } catch(Exception ignored){}
+        logItemSpawn(itemId, nm, qty); for(KPWebhookPreset r: rules){ if(r==null||!r.isActive()) continue; KPWebhookPreset.TriggerType tt=r.getTriggerType(); if(tt== KPWebhookPreset.TriggerType.ITEM_SPAWN){ if(matchesItemSpawn(r.getItemSpawnConfig(), itemId, nm)) executeRule(r,null,-1,null,null); } else if(tt== KPWebhookPreset.TriggerType.LOOT_DROP){ // backward compatible mapping + min value
+                KPWebhookPreset.LootConfig lc = r.getLootConfig();
+                // LOOT_DROP now matches ALL item spawns, only checks optional min value
+                boolean valueOk = true; if(lc!=null && lc.getMinValue()!=null && lc.getMinValue()>0){ int price=0; try { price = itemManager.getItemPrice(itemId); } catch(Exception ignored){} long total=(long)price * (long)qty; valueOk = total >= lc.getMinValue(); }
+                if(valueOk) {
+                    try { if(tokenService!=null){ net.runelite.api.Tile tile = ev.getTile(); net.runelite.api.coords.WorldPoint wp = tile!=null? tile.getWorldLocation(): null; tokenService.updateLastLootDrop(nm, wp); } } catch(Exception ignored){}
+                    executeRule(r,null,-1,null,null);
+                } } }
+
+            try { presetDebugWindow.setVisible(true); presetDebugWindow.toFront(); } catch(Exception ignored){}
     }
 
-    private void applyPresetOverheadTexts(KPWebhookPreset rule, Map<String,String> ctx){ if(rule==null) return; try {
-        if(rule.isForceCancelOnChange()) removeOverheadsForRule(rule.getId(), true);
-        if(rule.getTextOver()!=null && !rule.getTextOver().isBlank()){
-            ActiveOverheadText ot=new ActiveOverheadText(); ot.ruleId=rule.getId(); ot.position="Above"; ot.text=expand(rule.getTextOver(), ctx); ot.color=parseColor(rule.getTextOverColor(), Color.WHITE); ot.blink=Boolean.TRUE.equals(rule.getTextOverBlink()); ot.size=safeInt(rule.getTextOverSize(),16); ot.remainingTicks=Math.max(1,safeInt(rule.getTextOverDuration(),80)); ot.bold=Boolean.TRUE.equals(rule.getTextOverBold()); ot.italic=Boolean.TRUE.equals(rule.getTextOverItalic()); ot.underline=Boolean.TRUE.equals(rule.getTextOverUnderline()); ot.blinkInterval=2; overheadTexts.add(ot); }
-        if(rule.getTextCenter()!=null && !rule.getTextCenter().isBlank()){
-            ActiveOverheadText ot=new ActiveOverheadText(); ot.ruleId=rule.getId(); ot.position="Center"; ot.text=expand(rule.getTextCenter(), ctx); ot.color=parseColor(rule.getTextCenterColor(), Color.WHITE); ot.blink=Boolean.TRUE.equals(rule.getTextCenterBlink()); ot.size=safeInt(rule.getTextCenterSize(),16); ot.remainingTicks=Math.max(1,safeInt(rule.getTextCenterDuration(),80)); ot.bold=Boolean.TRUE.equals(rule.getTextCenterBold()); ot.italic=Boolean.TRUE.equals(rule.getTextCenterItalic()); ot.underline=Boolean.TRUE.equals(rule.getTextCenterUnderline()); ot.blinkInterval=2; overheadTexts.add(ot); }
-        if(rule.getTextUnder()!=null && !rule.getTextUnder().isBlank()){
-            ActiveOverheadText ot=new ActiveOverheadText(); ot.ruleId=rule.getId(); ot.position="Under"; ot.text=expand(rule.getTextUnder(), ctx); ot.color=parseColor(rule.getTextUnderColor(), Color.WHITE); ot.blink=Boolean.TRUE.equals(rule.getTextUnderBlink()); ot.size=safeInt(rule.getTextUnderSize(),16); ot.remainingTicks=Math.max(1,safeInt(rule.getTextUnderDuration(),80)); ot.bold=Boolean.TRUE.equals(rule.getTextUnderBold()); ot.italic=Boolean.TRUE.equals(rule.getTextUnderItalic()); ot.underline=Boolean.TRUE.equals(rule.getTextUnderUnderline()); ot.blinkInterval=2; overheadTexts.add(ot); }
-    } catch(Exception ignored){} }
-    private int safeInt(Integer v,int def){ return v==null?def:v; }
-    private Color parseColor(String hex, Color def){ if(hex==null||hex.isBlank()) return def; try { String h=hex.trim(); if(h.startsWith("#")) h=h.substring(1); if(h.length()==6){ return new Color(Integer.parseInt(h,16)); } if(h.length()==8){ return new Color((int)Long.parseLong(h,16), true); } } catch(Exception ignored){} return def; }
+    /* ===================== Restored / Recreated Helper Methods (simplified) ===================== */
+    private void cancelSequencesForRule(int ruleId){ try { activeSequences.removeIf(seq -> seq!=null && seq.rule!=null && seq.rule.getId()==ruleId); } catch(Exception ignored){} }
+    private void removeOverheadsForRule(int ruleId, boolean includeTexts){ try { if(includeTexts){ overheadTexts.removeIf(t-> t!=null && t.ruleId==ruleId); } overheadImages.removeIf(i-> i!=null && i.ruleId==ruleId); } catch(Exception ignored){} }
+    private void removePersistentOverheadsForRule(int ruleId){ try { overheadTexts.removeIf(t-> t!=null && t.ruleId==ruleId && t.persistent); overheadImages.removeIf(i-> i!=null && i.ruleId==ruleId && i.persistent); } catch(Exception ignored){} }
 
-    private String expand(String input, Map<String,String> ctx){ return tokenService!=null? tokenService.expand(input, ctx): input; }
-    private String safeReplaceDollarToken(String text,String key,String value){ return text; }
+    public String sanitizePlayerName(String n){ if(n==null) return ""; try { String nt = net.runelite.client.util.Text.removeTags(n); return nt.replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); } }
+    public String sanitizeNpcName(String n){ if(n==null) return ""; try { String nt = net.runelite.client.util.Text.removeTags(n); return nt.replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); } }
 
-    private void processActionLine(KPWebhookPreset rule, String rawLine, Map<String,String> ctx){
-        if(rawLine==null) return; String line=rawLine.trim(); if(line.isEmpty()||line.startsWith("#")) return;
-        String expanded = expand(line, ctx!=null?ctx:Collections.emptyMap());
-        try { if(overlayTextCommandHandler!=null && overlayTextCommandHandler.handle(expanded, rule)) return; } catch(Exception ignored){}
-        try { if(infoboxCommandHandler!=null && infoboxCommandHandler.handle(expanded, rule, ctx)) return; } catch(Exception ignored){}
-        try { if(highlightCommandHandler!=null && highlightCommandHandler.handle(line, rule)) return; } catch(Exception ignored){}
-        try { if(markTileCommandHandler!=null && markTileCommandHandler.handle(line, rule)) return; } catch(Exception ignored){}
-        try { if(customMessageCommandHandler!=null && customMessageCommandHandler.handle(expanded, rule, ctx)) return; } catch(Exception ignored){}
+    // Exposed for PlayerTriggerService to unify debug spawn logging and interaction cleanup
+    public void logPlayerSpawn(boolean despawn, Player p){ if(p==null) return; try { String name = sanitizePlayerName(p.getName()); if(despawn){ try { interactingPlayers.remove(name.toLowerCase(Locale.ROOT)); } catch(Exception ignored){} } if(debugWindow!=null && debugWindow.isVisible()){ try { int localCombat=0; try { if(client.getLocalPlayer()!=null) localCombat=client.getLocalPlayer().getCombatLevel(); } catch(Exception ignored){} debugWindow.logPlayerSpawn(despawn, name, p.getCombatLevel(), localCombat); } catch(Exception ignored){} } } catch(Exception ignored){} }
+    public void logNpcSpawn(boolean despawn, NPC npc){ if(debugWindow!=null && debugWindow.isVisible()){ try { int combat=0; try{ combat = npc.getCombatLevel(); } catch(Exception ignored){} debugWindow.logNpcSpawn(despawn, sanitizeNpcName(npc.getName()), npc.getId(), combat); } catch(Exception ignored){} } }
+
+    private boolean matchesId(Integer single, List<Integer> list, int id){ if(single!=null) return single==id; if(list!=null) return list.stream().filter(Objects::nonNull).anyMatch(v->v==id); return false; }
+
+    private boolean npcMatches(KPWebhookPreset.NpcConfig cfg, NPC npc){ if(npc==null || cfg==null) return false; boolean idMatch=false; if(cfg.getNpcIds()!=null && !cfg.getNpcIds().isEmpty()) idMatch = cfg.getNpcIds().contains(npc.getId()); String nm = sanitizeNpcName(npc.getName()).toLowerCase(Locale.ROOT).replace(' ','_'); boolean nameMatch=false; if(cfg.getNpcNames()!=null && !cfg.getNpcNames().isEmpty()) nameMatch = cfg.getNpcNames().contains(nm); if((cfg.getNpcIds()==null||cfg.getNpcIds().isEmpty()) && (cfg.getNpcNames()==null||cfg.getNpcNames().isEmpty())) return false; return idMatch || nameMatch; }
+
+    private void logItemSpawn(int itemId, String name, int qty){ if(debugWindow!=null && debugWindow.isVisible()){ try { debugWindow.logItemSpawn(itemId, name, qty); } catch(Exception ignored){} } }
+
+    private boolean matchesItemSpawn(KPWebhookPreset.ItemSpawnConfig cfg, int itemId, String name){ if(cfg==null) return true; String lowName = name==null?"": name.toLowerCase(Locale.ROOT); if(cfg.getItemIds()!=null && !cfg.getItemIds().isEmpty() && cfg.getItemIds().contains(itemId)) return true; if(cfg.getNames()!=null){ for(String n: cfg.getNames()){ if(n!=null && !n.isBlank() && lowName.equals(n.toLowerCase(Locale.ROOT))) return true; } } if(cfg.getWildcards()!=null){ for(String w: cfg.getWildcards()){ if(w==null||w.isBlank()) continue; String pat = Pattern.quote(w.toLowerCase(Locale.ROOT)).replace("*", "\\E.*\\Q"); try { if(lowName.matches(pat)) return true; } catch(Exception ignored){} } } return false; }
+
+    private boolean playerMatches(KPWebhookPreset.PlayerConfig cfg, Player p, boolean self){ if(p==null) return false; if(cfg==null) return true; if(cfg.isAll()) return !self; // exclude self when ALL
+        String nm = sanitizePlayerName(p.getName()).toLowerCase(Locale.ROOT);
+        if(cfg.getName()!=null && !cfg.getName().isBlank()) return nm.equals(cfg.getName().toLowerCase(Locale.ROOT));
+        if(cfg.getNames()!=null && !cfg.getNames().isEmpty()) return cfg.getNames().stream().filter(Objects::nonNull).map(s->s.toLowerCase(Locale.ROOT)).anyMatch(nm::equals);
+        if(cfg.getCombatRange()!=null){ try { Player local = client.getLocalPlayer(); if(local!=null){ int diff = Math.abs(local.getCombatLevel()-p.getCombatLevel()); return diff <= cfg.getCombatRange(); } } catch(Exception ignored){} }
+        return false; }
+
+    private void applyPresetOverheadTexts(KPWebhookPreset rule, Map<String,String> ctx){ if(rule==null) return; try { // OVER text
+            if(rule.getTextOver()!=null && !rule.getTextOver().isBlank()) addConfiguredOverheadText(rule, rule.getTextOver(), "Above", rule.getTextOverColor(), rule.getTextOverBlink(), rule.getTextOverDuration(), rule.getTextOverSize(), rule.getTextOverBold(), rule.getTextOverItalic(), rule.getTextOverUnderline(), ActiveOverheadText.TargetType.LOCAL_PLAYER, ctx);
+            if(rule.getTextUnder()!=null && !rule.getTextUnder().isBlank()) addConfiguredOverheadText(rule, rule.getTextUnder(), "Under", rule.getTextUnderColor(), rule.getTextUnderBlink(), rule.getTextUnderDuration(), rule.getTextUnderSize(), rule.getTextUnderBold(), rule.getTextUnderItalic(), rule.getTextUnderUnderline(), ActiveOverheadText.TargetType.LOCAL_PLAYER, ctx);
+            if(rule.getTextCenter()!=null && !rule.getTextCenter().isBlank()) addConfiguredOverheadText(rule, rule.getTextCenter(), "Center", rule.getTextCenterColor(), rule.getTextCenterBlink(), rule.getTextCenterDuration(), rule.getTextCenterSize(), rule.getTextCenterBold(), rule.getTextCenterItalic(), rule.getTextCenterUnderline(), ActiveOverheadText.TargetType.LOCAL_PLAYER, ctx);
+        } catch(Exception ignored){} }
+
+    // Replaces previous addOverheadText(rule, raw, color...) which hardcoded position to OVER; keep name distinct
+    private void addConfiguredOverheadText(KPWebhookPreset rule, String raw, String position, String colorHex, boolean blink, int duration, int size, boolean bold, boolean italic, boolean underline, ActiveOverheadText.TargetType target, Map<String,String> ctx){ String txt = tokenService!=null? tokenService.expand(raw, ctx): raw; ActiveOverheadText t=new ActiveOverheadText(); t.text=txt; t.color=parseColor(colorHex, Color.WHITE); t.blink=blink; t.size=size; t.position=position; t.remainingTicks=Math.max(1, duration); t.bold=bold; t.italic=italic; t.underline=underline; t.targetType=target; t.ruleId=rule.getId(); overheadTexts.add(t); }
+
+    // Convenience overload: simple text with position (CENTER/OVER/UNDER) using defaults
+    public void addOverheadText(KPWebhookPreset rule, String raw, String position){
+        if(raw==null || raw.isBlank()) return;
+        String pos = position==null? "Above" : position.trim();
+        ActiveOverheadText t = new ActiveOverheadText();
+        t.text = raw.trim();
+        t.color = Color.WHITE;
+        t.blink = false;
+        t.size = 16;
+        t.position = pos; // Expect: Above, Under, Center
+        t.remainingTicks = 8; // default duration
+        t.bold = false; t.italic = false; t.underline = false;
+        t.targetType = ActiveOverheadText.TargetType.LOCAL_PLAYER;
+        if(rule!=null) t.ruleId = rule.getId();
+        overheadTexts.add(t);
+    }
+
+    // --- TEXT_* command parsing (non-persistent) ---
+    private boolean tryProcessTextCommand(KPWebhookPreset rule, String expanded){
+        String u = expanded.toUpperCase(Locale.ROOT);
+        String position = null; // Above / Under / Center
+        if(u.startsWith("TEXT_OVER ")) position = "Above"; else if(u.equals("TEXT_OVER")) position="Above"; else if(u.startsWith("TEXT_UNDER ")) position="Under"; else if(u.equals("TEXT_UNDER")) position="Under"; else if(u.startsWith("TEXT_CENTER ")) position="Center"; else if(u.equals("TEXT_CENTER")) position="Center"; else return false;
+        String remainder = expanded.substring(expanded.indexOf(' ')+1).trim(); if(!expanded.contains(" ")) remainder=""; // handle bare command
+        // Parse optional target like TARGET / PLAYER <name> / NPC <id|name> etc.
+        ActiveOverheadText.TargetType targetType = ActiveOverheadText.TargetType.LOCAL_PLAYER; java.util.Set<String> targetNames=null; java.util.Set<Integer> targetIds=null;
+        if(!remainder.isEmpty()){
+            String[] toks = remainder.split("\\s+",3);
+            if(toks.length>=1){
+                String t0 = toks[0].toUpperCase(Locale.ROOT);
+                boolean consumed=false;
+                if(t0.equals("TARGET")){ targetType= ActiveOverheadText.TargetType.TARGET; consumed=true; }
+                else if(t0.equals("LOCAL_PLAYER")){ consumed=true; }
+                else if(t0.equals("PLAYER") && toks.length>=2){ targetType= ActiveOverheadText.TargetType.PLAYER_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeNameToken(toks[1])); consumed=true; remainder = remainder.substring(toks[0].length()+1+toks[1].length()).trim(); }
+                else if(t0.equals("NPC") && toks.length>=2){ String spec=toks[1]; if(spec.matches("\\d+")){ targetType= ActiveOverheadText.TargetType.NPC_ID; targetIds=new java.util.HashSet<>(); try{ targetIds.add(Integer.parseInt(spec)); }catch(Exception ignored){} } else { targetType= ActiveOverheadText.TargetType.NPC_NAME; targetNames=new java.util.HashSet<>(); targetNames.add(normalizeNameToken(spec)); } consumed=true; remainder = remainder.substring(toks[0].length()+1+toks[1].length()).trim(); }
+                else if(t0.equals("FRIEND_LIST")){ targetType= ActiveOverheadText.TargetType.FRIEND_LIST; consumed=true; }
+                else if(t0.equals("IGNORE_LIST")){ targetType= ActiveOverheadText.TargetType.IGNORE_LIST; consumed=true; }
+                else if(t0.equals("PARTY_MEMBERS")){ targetType= ActiveOverheadText.TargetType.PARTY_MEMBERS; consumed=true; }
+                else if(t0.equals("FRIENDS_CHAT")){ targetType= ActiveOverheadText.TargetType.FRIENDS_CHAT; consumed=true; }
+                else if(t0.equals("TEAM_MEMBERS")){ targetType= ActiveOverheadText.TargetType.TEAM_MEMBERS; consumed=true; }
+                else if(t0.equals("CLAN_MEMBERS")){ targetType= ActiveOverheadText.TargetType.CLAN_MEMBERS; consumed=true; }
+                else if(t0.equals("OTHERS")){ targetType= ActiveOverheadText.TargetType.OTHERS; consumed=true; }
+                else if(t0.equals("PLAYER_SPAWN")){ targetType= ActiveOverheadText.TargetType.PLAYER_SPAWN; consumed=true; }
+                else if(t0.equals("ITEM_SPAWN")){ targetType= ActiveOverheadText.TargetType.ITEM_SPAWN; consumed=true; }
+                if(consumed){ if(remainder.toUpperCase(Locale.ROOT).startsWith(t0)){ remainder = remainder.substring(t0.length()).trim(); } }
+            }
+        }
+        String text = remainder; // whatever remains is text
+        if(text==null || text.isBlank()) return true; // silent ignore empty text after parsing
+        // Choose styling from rule config (same fields used by preset positions)
+        Color color = Color.WHITE; int size=16; boolean blink=false; boolean bold=false; boolean italic=false; boolean underline=false; int duration=8;
+        if("Above".equals(position)){ color=parseColor(rule.getTextOverColor(), color); Integer sz=rule.getTextOverSize(); if(sz!=null) size=sz; blink=bool(rule.getTextOverBlink()); bold=bool(rule.getTextOverBold()); italic=bool(rule.getTextOverItalic()); underline=bool(rule.getTextOverUnderline()); Integer dur=rule.getTextOverDuration(); if(dur!=null) duration=dur; }
+        else if("Under".equals(position)){ color=parseColor(rule.getTextUnderColor(), color); Integer sz=rule.getTextUnderSize(); if(sz!=null) size=sz; blink=bool(rule.getTextUnderBlink()); bold=bool(rule.getTextUnderBold()); italic=bool(rule.getTextUnderItalic()); underline=bool(rule.getTextUnderUnderline()); Integer dur=rule.getTextUnderDuration(); if(dur!=null) duration=dur; }
+        else if("Center".equals(position)){ color=parseColor(rule.getTextCenterColor(), color); Integer sz=rule.getTextCenterSize(); if(sz!=null) size=sz; blink=bool(rule.getTextCenterBlink()); bold=bool(rule.getTextCenterBold()); italic=bool(rule.getTextCenterItalic()); underline=bool(rule.getTextCenterUnderline()); Integer dur=rule.getTextCenterDuration(); if(dur!=null) duration=dur; }
+        ActiveOverheadText t = new ActiveOverheadText(); t.text=text; t.color=color; t.size=size; t.blink=blink; t.position=position; t.remainingTicks=Math.max(1,duration); t.bold=bold; t.italic=italic; t.underline=underline; t.targetType=targetType; t.targetNames=targetNames; t.targetIds=targetIds; t.ruleId=rule.getId(); overheadTexts.add(t); return true;
+    }
+    private String normalizeNameToken(String n){ if(n==null) return ""; return n.replace('_',' ').trim().toLowerCase(Locale.ROOT);} private boolean bool(Boolean b){ return b!=null && b; }
+
+    private void processActionLine(KPWebhookPreset rule, String line, Map<String,String> ctx){ if(line==null) return; String expanded = tokenService!=null? tokenService.expand(line, ctx): line; String up = expanded.toUpperCase(Locale.ROOT);
         try {
-            if(P_TEXT_OVER.matcher(line).find()||P_TEXT_UNDER.matcher(line).find()||P_TEXT_CENTER.matcher(line).find()){ handleTargetedTextCommand(rule, expanded, ctx); return; }
-            if(P_IMG_OVER.matcher(line).find()||P_IMG_UNDER.matcher(line).find()||P_IMG_CENTER.matcher(line).find()){ handleImageCommand(rule, expanded, ctx); return; }
+            if(tryProcessTextCommand(rule, expanded)) return; // TEXT_* first so they don't get ignored
+            if(up.startsWith("NOTIFY ")){ String msg = expanded.substring(7).trim(); if(!msg.isEmpty() && notifier!=null) notifier.notify(msg); return; }
+            if(up.equals("NOTIFY")){ if(notifier!=null) notifier.notify(rule.getTitle()!=null? rule.getTitle(): "Triggered"); return; }
+            if(up.startsWith("CUSTOM_MESSAGE ") && customMessageCommandHandler!=null){ customMessageCommandHandler.handle(expanded, rule, ctx); return; }
+            if(up.startsWith("HIGHLIGHT_") && highlightCommandHandler!=null){ highlightCommandHandler.handle(expanded, rule); return; }
+            if(up.startsWith("MARK_TILE") && markTileCommandHandler!=null){ markTileCommandHandler.handle(expanded, rule); return; }
+            if(up.startsWith("OVERLAY_TEXT") && overlayTextCommandHandler!=null){ overlayTextCommandHandler.handle(expanded, rule); return; }
+            if(up.startsWith("INFOBOX") && infoboxCommandHandler!=null){ infoboxCommandHandler.handle(expanded, rule, ctx); return; }
+            if(up.startsWith("STOP")){ stopRule(rule.getId()); return; }
+            if(up.startsWith("WEBHOOK ")){ String body = expanded.substring(8).trim(); postWebhook(rule, body, ctx); return; }
+            if(up.equals("WEBHOOK")){ postWebhook(rule, rule.getCommands(), ctx); return; }
+        } catch(Exception e){ log.warn("Action line error: {}", line, e); }
+    }
+
+    private void postWebhook(KPWebhookPreset rule, String body, Map<String,String> ctx){ String url = rule.getWebhookUrl(); if(url==null || url.isBlank()) return; String payload = body==null?"": body; if(tokenService!=null) payload = tokenService.expand(payload, ctx); try {
+            RequestBody rb = RequestBody.create(JSON, payload); Request r = new Request.Builder().url(url).post(rb).build(); okHttpClient.newCall(r).enqueue(new Callback(){ public void onFailure(Call call, IOException e){ } public void onResponse(Call call, Response response){ try(response){} catch(Exception ignored){} }});
+        } catch(Exception ignored){} }
+
+    private void processGearChanged(){ /* simplified stub: full gear diff logic removed */ }
+
+    private boolean isInWilderness(){ try { return client!=null && client.getVarbitValue(net.runelite.api.Varbits.IN_WILDERNESS)==1; } catch(Exception ignored){ return false; } }
+    private boolean isPvPWorld(){ try { return client!=null && client.getWorldType()!=null && client.getWorldType().stream().anyMatch(t-> t==WorldType.PVP || t==WorldType.HIGH_RISK || t==WorldType.LAST_MAN_STANDING || t==WorldType.DEADMAN); } catch(Exception ignored){ return false; } }
+    private boolean isAttackablePerRules(Player local, Player other){ if(local==null || other==null) return false; try { int diff = Math.abs(local.getCombatLevel()-other.getCombatLevel()); return diff <= 15 || isInWilderness() || isPvPWorld(); } catch(Exception ignored){ return true; } }
+
+    private boolean isMostlyBlack(BufferedImage img){ if(img==null) return true; int w=img.getWidth(), h=img.getHeight(); long dark=0, total=0; for(int y=0; y<h; y+=10){ for(int x=0; x<w; x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255, g=(rgb>>8)&255, b=rgb&255; int lum=(r+g+b)/3; if(lum<15) dark++; total++; } } return total>0 && dark*1.0/total > 0.85; }
+    private boolean isMostlyWhite(BufferedImage img){ if(img==null) return false; int w=img.getWidth(), h=img.getHeight(); long light=0, total=0; for(int y=0; y<h; y+=10){ for(int x=0; x<w; x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255, g=(rgb>>8)&255, b=rgb&255; int lum=(r+g+b)/3; if(lum>240) light++; total++; } } return total>0 && light*1.0/total > 0.85; }
+
+    // === Public UI actions (added) ===
+    public void openDebugWindow(){
+        try {
+            if(debugWindow==null || !debugWindow.isDisplayable()){
+                debugWindow = new KPWebhookDebugWindow(this);
+            }
+            debugWindow.setVisible(true);
+            try { debugWindow.toFront(); } catch(Exception ignored){}
         } catch(Exception ignored){}
-        String upper=line.toUpperCase(Locale.ROOT);
-        if(upper.equals("STOP")){ try { activeSequences.clear(); highlightManager.clear(); overlayTextManager.clear(); if(infoboxCommandHandler!=null) infoboxCommandHandler.clearAll(); overheadTexts.clear(); overheadImages.clear(); markTileManager.clear(); } catch(Exception ignored){} return; }
-        if(upper.equals("STOP_RULE")){ try { cancelSequencesForRule(rule.getId()); removeOverheadsForRule(rule.getId(),true); if(infoboxCommandHandler!=null) infoboxCommandHandler.removeByRule(rule.getId()); overlayTextManager.removeByRule(rule.getId()); highlightManager.removeAllByRule(rule.getId()); markTileManager.removeByRule(rule.getId()); } catch(Exception ignored){} return; }
-        if(upper.startsWith("NOTIFY")){ try { notifier.notify(expanded.length()>6? expanded.substring(6).trim():"Event"); } catch(Exception ignored){} return; }
-        if(upper.startsWith("WEBHOOK")){ try { String rest=expanded.substring(7).trim(); String[] parts=rest.split("\\s+",2); String url=getDefaultWebhook(); String payload=""; if(parts.length==1){ payload=parts[0]; } else { if(parts[0].startsWith("http")){ url=parts[0]; payload=parts[1]; } else payload=rest; } if(url!=null && !url.isBlank() && payload!=null){ sendWebhook(url.trim(), payload); } } catch(Exception ignored){} return; }
-        if(upper.startsWith("SCREENSHOT")){ try { requestScreenshot(rule, ctx); } catch(Exception ignored){} return; }
-        if(upper.startsWith("TOGGLEPRESET")){ try { int rid=Integer.parseInt(expanded.substring("TOGGLEPRESET".length()).trim()); toggleActive(rid); if(panel!=null) panel.refreshTable(); } catch(Exception ignored){} return; }
-        if(upper.startsWith("TOGGLEGROUP")){ return; }
-        try { addOverheadText(rule, expanded, "Above"); } catch(Exception ignored){}
     }
-    private void cancelSequencesForRule(int ruleId){ try { activeSequences.removeIf(s-> s!=null && s.rule!=null && s.rule.getId()==ruleId); } catch(Exception ignored){} }
-    private void removeOverheadsForRule(int ruleId, boolean includeImages){ try { overheadTexts.removeIf(t->t!=null && t.ruleId==ruleId); if(includeImages) overheadImages.removeIf(i->i!=null && i.ruleId==ruleId); } catch(Exception ignored){} }
-    private void removePersistentOverheadsForRule(int ruleId){ try { overheadTexts.removeIf(t->t!=null && t.ruleId==ruleId && t.persistent); overheadImages.removeIf(i->i!=null && i.ruleId==ruleId && i.persistent); } catch(Exception ignored){} }
-
-    private void handleTargetedTextCommand(KPWebhookPreset rule, String expanded, Map<String,String> ctx){
-        if(expanded==null) return; if(rule!=null && rule.isForceCancelOnChange()) try { removeOverheadsForRule(rule.getId(), true);} catch(Exception ignored){}
-        String line=expanded.trim();
-        java.util.regex.Matcher mUnder=P_TEXT_UNDER.matcher(line), mOver=P_TEXT_OVER.matcher(line), mCenter=P_TEXT_CENTER.matcher(line);
-        String position=null,payload=null; if(mUnder.find()){ position="Under"; payload=mUnder.group(1).trim(); } else if(mOver.find()){ position="Above"; payload=mOver.group(1).trim(); } else if(mCenter.find()){ position="Center"; payload=mCenter.group(1).trim(); }
-        if(position==null||payload==null||payload.isBlank()) return;
-        ActiveOverheadText.TargetType targetType=ActiveOverheadText.TargetType.LOCAL_PLAYER; Set<String> targetNames=null; Set<Integer> targetIds=null; String working=payload; String[] toks=working.split("\\s+",3);
-        if(toks.length>=1){ String t0=toks[0].toUpperCase(Locale.ROOT); boolean consumed=false; if(t0.equals("TARGET")){ targetType=ActiveOverheadText.TargetType.TARGET; consumed=true; } else if(t0.equals("LOCAL_PLAYER")){ consumed=true; } else if(t0.equals("PLAYER") && toks.length>=2){ targetType=ActiveOverheadText.TargetType.PLAYER_NAME; targetNames=new HashSet<>(); targetNames.add(normalizeName(toks[1])); if(toks.length>=3) working=toks[2]; else working=""; consumed=false; } else if(t0.equals("NPC") && toks.length>=2){ String spec=toks[1]; if(spec.matches("\\d+")){ targetType=ActiveOverheadText.TargetType.NPC_ID; targetIds=new HashSet<>(); try{ targetIds.add(Integer.parseInt(spec)); }catch(Exception ignored){} } else { targetType=ActiveOverheadText.TargetType.NPC_NAME; targetNames=new HashSet<>(); targetNames.add(normalizeName(spec)); } consumed=true; } else if(t0.equals("PLAYER_SPAWN")){ targetType=ActiveOverheadText.TargetType.PLAYER_SPAWN; consumed=true; } else if(t0.equals("INTERACTION")){ targetType=ActiveOverheadText.TargetType.INTERACTION; consumed=true; } else if(t0.equals("FRIEND_LIST")){ targetType=ActiveOverheadText.TargetType.FRIEND_LIST; consumed=true; } else if(t0.equals("IGNORE_LIST")){ targetType=ActiveOverheadText.TargetType.IGNORE_LIST; consumed=true; } else if(t0.equals("PARTY_MEMBERS")){ targetType=ActiveOverheadText.TargetType.PARTY_MEMBERS; consumed=true; } else if(t0.equals("FRIENDS_CHAT")){ targetType=ActiveOverheadText.TargetType.FRIENDS_CHAT; consumed=true; } else if(t0.equals("TEAM_MEMBERS")){ targetType=ActiveOverheadText.TargetType.TEAM_MEMBERS; consumed=true; } else if(t0.equals("CLAN_MEMBERS")){ targetType=ActiveOverheadText.TargetType.CLAN_MEMBERS; consumed=true; } else if(t0.equals("OTHERS")){ targetType=ActiveOverheadText.TargetType.OTHERS; consumed=true; } if(consumed) working=working.substring(toks[0].length()).trim(); }
-        if(working.isEmpty()) return; String finalText=expand(working, ctx!=null?ctx:Collections.emptyMap()); ActiveOverheadText ot=new ActiveOverheadText(); ot.setRuleId(rule!=null?rule.getId():-1); ot.setPosition(position); ot.setText(finalText);
-        Color color=Color.WHITE; int size=16; boolean blink=false,bold=false,italic=false,underline=false; int duration=80;
-        if(rule!=null){ if("Above".equals(position)){ color=parseColor(rule.getTextOverColor(), color); size=safeInt(rule.getTextOverSize(),16); blink=Boolean.TRUE.equals(rule.getTextOverBlink()); bold=Boolean.TRUE.equals(rule.getTextOverBold()); italic=Boolean.TRUE.equals(rule.getTextOverItalic()); underline=Boolean.TRUE.equals(rule.getTextOverUnderline()); duration=safeInt(rule.getTextOverDuration(),80);} else if("Under".equals(position)){ color=parseColor(rule.getTextUnderColor(), color); size=safeInt(rule.getTextUnderSize(),16); blink=Boolean.TRUE.equals(rule.getTextUnderBlink()); bold=Boolean.TRUE.equals(rule.getTextUnderBold()); italic=Boolean.TRUE.equals(rule.getTextUnderItalic()); underline=Boolean.TRUE.equals(rule.getTextUnderUnderline()); duration=safeInt(rule.getTextUnderDuration(),80);} else if("Center".equals(position)){ color=parseColor(rule.getTextCenterColor(), color); size=safeInt(rule.getTextCenterSize(),16); blink=Boolean.TRUE.equals(rule.getTextCenterBlink()); bold=Boolean.TRUE.equals(rule.getTextCenterBold()); italic=Boolean.TRUE.equals(rule.getTextCenterItalic()); underline=Boolean.TRUE.equals(rule.getTextCenterUnderline()); duration=safeInt(rule.getTextCenterDuration(),80);} }
-        ot.setColor(color); ot.setSize(size); ot.setBlink(blink); ot.setBold(bold); ot.setItalic(italic); ot.setUnderline(underline); ot.setBlinkInterval(blink?2:0); ot.setBlinkCounter(0); if(duration<=0){ ot.setPersistent(true); ot.setRemainingTicks(0);} else { ot.setPersistent(false); ot.setRemainingTicks(Math.max(1,duration)); } ot.setTargetType(targetType); ot.setTargetNames(targetNames); ot.setTargetIds(targetIds); overheadTexts.add(ot);
+    public void openPresetDebugWindow(){
+        try {
+            if(presetDebugWindow==null || !presetDebugWindow.isDisplayable()){
+                presetDebugWindow = new KPWebhookPresetDebugWindow();
+            }
+            presetDebugWindow.setVisible(true);
+            try { presetDebugWindow.toFront(); } catch(Exception ignored){}
+        } catch(Exception ignored){}
     }
-    private String normalizeName(String n){ if(n==null) return ""; return n.replace('_',' ').trim().toLowerCase(Locale.ROOT); }
-
-    private void handleImageCommand(KPWebhookPreset rule, String expanded, Map<String,String> ctx){
-        String line=expanded==null?"":expanded.trim(); if(rule!=null && rule.isForceCancelOnChange()) try { removeOverheadsForRule(rule.getId(), true);}catch(Exception ignored){}
-        java.util.regex.Matcher mO=P_IMG_OVER.matcher(line), mU=P_IMG_UNDER.matcher(line), mC=P_IMG_CENTER.matcher(line); String position=null, rest=null; if(mO.find()){ position="Above"; rest=mO.group(1).trim(); } else if(mU.find()){ position="Under"; rest=mU.group(1).trim(); } else if(mC.find()){ position="Center"; rest=mC.group(1).trim(); } if(position==null||rest==null||rest.isBlank()) return;
-        String[] toks=rest.split("\\s+",3); ActiveOverheadImage.TargetType targetType=ActiveOverheadImage.TargetType.LOCAL_PLAYER; Set<String> targetNames=null; Set<Integer> targetIds=null; int idx=0; if(toks.length>0){ String t0=toks[0].toUpperCase(Locale.ROOT); boolean consumed=false; if(t0.equals("TARGET")){ targetType=ActiveOverheadImage.TargetType.TARGET; consumed=true;} else if(t0.equals("LOCAL_PLAYER")){ consumed=true;} else if(t0.equals("PLAYER") && toks.length>=2){ targetType=ActiveOverheadImage.TargetType.PLAYER_NAME; targetNames=new HashSet<>(); targetNames.add(normalizeName(toks[1])); idx=2; } else if(t0.equals("NPC") && toks.length>=2){ String spec=toks[1]; if(spec.matches("\\d+")){ targetType=ActiveOverheadImage.TargetType.NPC_ID; targetIds=new HashSet<>(); try{ targetIds.add(Integer.parseInt(spec)); }catch(Exception ignored){} } else { targetType=ActiveOverheadImage.TargetType.NPC_NAME; targetNames=new HashSet<>(); targetNames.add(normalizeName(spec)); } idx=2; } else if(t0.equals("PLAYER_SPAWN")){ targetType=ActiveOverheadImage.TargetType.PLAYER_SPAWN; consumed=true; } else if(t0.equals("INTERACTION")){ targetType=ActiveOverheadImage.TargetType.INTERACTION; consumed=true; } else if(t0.equals("FRIEND_LIST")){ targetType=ActiveOverheadImage.TargetType.FRIEND_LIST; consumed=true; } else if(t0.equals("IGNORE_LIST")){ targetType=ActiveOverheadImage.TargetType.IGNORE_LIST; consumed=true; } else if(t0.equals("PARTY_MEMBERS")){ targetType=ActiveOverheadImage.TargetType.PARTY_MEMBERS; consumed=true; } else if(t0.equals("FRIENDS_CHAT")){ targetType=ActiveOverheadImage.TargetType.FRIENDS_CHAT; consumed=true; } else if(t0.equals("TEAM_MEMBERS")){ targetType=ActiveOverheadImage.TargetType.TEAM_MEMBERS; consumed=true; } else if(t0.equals("CLAN_MEMBERS")){ targetType=ActiveOverheadImage.TargetType.CLAN_MEMBERS; consumed=true; } else if(t0.equals("OTHERS")){ targetType=ActiveOverheadImage.TargetType.OTHERS; consumed=true; } if(consumed) idx=1; }
-        if(idx>=toks.length) return; String idTok=toks[idx]; int itemOrSpriteId; boolean sprite=false; try { if(idTok.startsWith("-")){ sprite=true; itemOrSpriteId=Integer.parseInt(idTok.substring(1)); } else itemOrSpriteId=Integer.parseInt(idTok); } catch(Exception e){ return; }
-        int duration=rule!=null? safeInt(rule.getImgDuration(),100):100; boolean blink=rule!=null && Boolean.TRUE.equals(rule.getImgBlink()); ActiveOverheadImage oi=new ActiveOverheadImage(); oi.setItemOrSpriteId(itemOrSpriteId); oi.setSprite(sprite); oi.setPosition(position); oi.setBlink(blink); oi.setBlinkInterval(blink?2:0); oi.setBlinkCounter(0); oi.setVisiblePhase(true); oi.setRuleId(rule!=null?rule.getId():-1); oi.setTargetType(targetType); oi.setTargetNames(targetNames); oi.setTargetIds(targetIds); if(duration<=0){ oi.setPersistent(true); oi.setRemainingTicks(0);} else { oi.setPersistent(false); oi.setRemainingTicks(Math.max(1,duration)); }
-        try { if(sprite){ spriteManager.getSpriteAsync(itemOrSpriteId,0, s->{ if(s!=null) oi.setImage(s); }); } else { BufferedImage img=itemManager.getImage(itemOrSpriteId); if(img!=null) oi.setImage(img); } } catch(Exception ignored){}
-        overheadImages.add(oi);
+    public void manualSend(int id){
+        KPWebhookPreset r = find(id);
+        if(r==null) return;
+        try { if(debugWindow!=null && debugWindow.isVisible()){ debugWindow.logManual(r.getId(), r.getTitle()); } } catch(Exception ignored){}
+        executeRule(r, null, -1, r.getStatConfig(), r.getWidgetConfig());
     }
 
-    private void processGearChanged(){
-        Player local=null; try { local=client.getLocalPlayer(); } catch(Exception ignored){}
-        if(local!=null){ try { ItemContainer equip=client.getItemContainer(InventoryID.EQUIPMENT); if(equip!=null){ int[] ids=Arrays.stream(equip.getItems()).mapToInt(i-> i!=null? i.getId():-1).toArray(); Set<Integer> current=new HashSet<>(); for(int id: ids) if(id>0) current.add(id); if(!localGearInitialized){ lastLocalGear.clear(); lastLocalGear.addAll(current); localGearInitialized=true; } else if(!current.equals(lastLocalGear)){ Set<Integer> added=new HashSet<>(current); added.removeAll(lastLocalGear); for(Integer add: added){ if(add!=null) gearChanged(false, add); } lastLocalGear.clear(); lastLocalGear.addAll(current); } } } catch(Exception ignored){} }
+    // Expose default webhook URL (trim blank -> null)
+    public String getDefaultWebhook(){
+        try {
+            if(config!=null){
+                String v = config.defaultWebhookUrl();
+                if(v!=null){ v = v.trim(); if(!v.isEmpty()) return v; }
+            }
+        } catch(Exception ignored){}
+        return null;
     }
-    private void gearChanged(boolean target,int itemId){ String name=""; try { name=itemManager.getItemComposition(itemId).getName(); } catch(Exception ignored){} if(debugWindow!=null && debugWindow.isVisible()){ try { debugWindow.logGearChange(target,itemId,name);}catch(Exception ignored){} } for(KPWebhookPreset r: rules){ if(!r.isActive()) continue; KPWebhookPreset.TriggerType tt=r.getTriggerType(); if((!target && tt== KPWebhookPreset.TriggerType.GEAR_CHANGED) || (target && tt== KPWebhookPreset.TriggerType.TARGET_GEAR_CHANGED)){ if(matchesGear(r.getGearConfig(), itemId, name)) executeRule(r,null,-1,null,null); } } }
-    private boolean matchesGear(KPWebhookPreset.GearConfig cfg,int itemId,String name){ if(cfg==null) return true; String low=name!=null? name.toLowerCase(Locale.ROOT):""; if(cfg.getItemIds()!=null && cfg.getItemIds().contains(itemId)) return true; if(cfg.getNames()!=null && cfg.getNames().contains(low)) return true; if(cfg.getWildcards()!=null){ for(String w: cfg.getWildcards()){ if(w==null) continue; String pattern=w.toLowerCase(Locale.ROOT); if(!pattern.contains("*")){ if(low.contains(pattern)) return true; } else { String regex=Pattern.quote(pattern).replace("*","\\E.*\\Q"); if(low.matches("(?i)"+regex)) return true; } } } return false; }
 
-    private void ensureUniqueIds(){ Set<Integer> used=new HashSet<>(); for(KPWebhookPreset r: new ArrayList<>(rules)){ if(r==null) continue; if(r.getId()<0 || used.contains(r.getId())) r.setId(nextId++); used.add(r.getId()); } for(KPWebhookPreset r: rules) if(r!=null && r.getId()>=nextId) nextId=r.getId()+1; }
-    private boolean matchesId(Integer single,List<Integer> list,int id){ if(list!=null && !list.isEmpty()) return list.contains(id); if(single!=null) return single==id; return false; }
-    private boolean matchesAnim(KPWebhookPreset.AnimationConfig cfg,int anim){ if(cfg==null) return true; if(cfg.getAnimationIds()!=null && !cfg.getAnimationIds().isEmpty()) return cfg.getAnimationIds().contains(anim); if(cfg.getAnimationId()!=null) return cfg.getAnimationId()==anim; return false; }
-    private boolean matchesGraphic(KPWebhookPreset.GraphicConfig cfg,int gid){ if(cfg==null) return true; if(cfg.getGraphicIds()!=null && !cfg.getGraphicIds().isEmpty()) return cfg.getGraphicIds().contains(gid); if(cfg.getGraphicId()!=null) return cfg.getGraphicId()==gid; return false; }
-    private boolean matchesProjectile(KPWebhookPreset.ProjectileConfig cfg,int pid){ if(cfg==null) return true; if(cfg.getProjectileIds()!=null && !cfg.getProjectileIds().isEmpty()) return cfg.getProjectileIds().contains(pid); if(cfg.getProjectileId()!=null) return cfg.getProjectileId()==pid; return cfg.getProjectileIds()==null || cfg.getProjectileIds().isEmpty(); }
-
-    public void manualSend(int id){ KPWebhookPreset r=find(id); if(r==null) return; executeRule(r,null,-1,r.getStatConfig(), r.getWidgetConfig()); if(debugWindow!=null && debugWindow.isVisible()){ try { debugWindow.logManual(r.getId(), r.getTitle()); } catch(Exception ignored){} } }
-    private void sendWebhook(String url,String payload){ if(url==null||url.isBlank()||payload==null) return; RequestBody body=RequestBody.create(JSON, payload); Request req=new Request.Builder().url(url).post(body).build(); okHttpClient.newCall(req).enqueue(new Callback(){ @Override public void onFailure(Call call,IOException e){ log.debug("Webhook failed: {}", e.getMessage()); } @Override public void onResponse(Call call,Response response){ try(response){ } catch(Exception ignored){} } }); }
-    private void requestScreenshot(KPWebhookPreset rule, Map<String,String> ctx){ long now=System.currentTimeMillis(); if(now-lastScreenshotRequestMs<SCREENSHOT_COOLDOWN_MS) return; lastScreenshotRequestMs=now; BufferedImage img=lastFrame; if(img==null) return; try { ByteArrayOutputStream baos=new ByteArrayOutputStream(); ImageIO.write(img,"png",baos); String b64=Base64.getEncoder().encodeToString(baos.toByteArray()); String payload="{\"screenshot\":\""+b64+"\"}"; String url= rule!=null && !rule.isUseDefaultWebhook() && rule.getWebhookUrl()!=null && !rule.getWebhookUrl().isBlank()? rule.getWebhookUrl(): getDefaultWebhook(); if(url!=null && !url.isBlank()) sendWebhook(url,payload); } catch(Exception ignored){} }
-    private boolean isMostlyBlack(BufferedImage img){ if(img==null) return true; int w=img.getWidth(), h=img.getHeight(); long dark=0,total=0; for(int y=0;y<h;y+=10){ for(int x=0;x<w;x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255,g=(rgb>>8)&255,b=rgb&255; int lum=r+g+b; if(lum<60) dark++; total++; } } return total>0 && dark>(total*80/100); }
-    private boolean isMostlyWhite(BufferedImage img){ if(img==null) return false; int w=img.getWidth(), h=img.getHeight(); long light=0,total=0; for(int y=0;y<h;y+=10){ for(int x=0;x<w;x+=10){ int rgb=img.getRGB(x,y); int r=(rgb>>16)&255,g=(rgb>>8)&255,b=rgb&255; int lum=r+g+b; if(lum>700) light++; total++; } } return total>0 && light>(total*80/100); }
-
-    // ===== Restored helper methods & public accessors referenced elsewhere =====
-    public String sanitizePlayerName(String n){ if(n==null) return ""; try { String nt=net.runelite.client.util.Text.removeTags(n); return nt.replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); } }
-    private String sanitizeNpcName(String n){ if(n==null) return ""; try { String nt=net.runelite.client.util.Text.removeTags(n); return nt.replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); } }
-    public String getDefaultWebhook(){ String def=config!=null? config.defaultWebhookUrl():null; return def!=null? def.trim():""; }
-    public void logPlayerSpawn(boolean despawn, Player p){ if(p==null) return; if(debugWindow!=null && debugWindow.isVisible()){ try { String name=sanitizePlayerName(p.getName()); int localCombat=0; try { if(client.getLocalPlayer()!=null) localCombat=client.getLocalPlayer().getCombatLevel(); } catch(Exception ignored){} debugWindow.logPlayerSpawn(despawn,name,p.getCombatLevel(), localCombat); } catch(Exception ignored){} } }
-    public void executePlayerTrigger(KPWebhookPreset rule, Player p){ if(rule==null || p==null) return; executeRule(rule,null,-1,null,null,p); }
-    private boolean playerMatches(KPWebhookPreset.PlayerConfig cfg, Player p, boolean self){ if(cfg==null) return true; if(self) return false; if(cfg.isAll()) return true; if(cfg.getCombatRange()!=null){ try { int local= client.getLocalPlayer()!=null? client.getLocalPlayer().getCombatLevel():0; return Math.abs(local - p.getCombatLevel())<= cfg.getCombatRange(); } catch(Exception ignored){ return false; } } List<String> names=cfg.getNames(); if(names!=null && !names.isEmpty()){ String pn=sanitizePlayerName(p.getName()).toLowerCase(Locale.ROOT); for(String n: names) if(pn.equals(n)) return true; return false; } if(cfg.getName()!=null && !cfg.getName().isBlank()){ return sanitizePlayerName(p.getName()).equalsIgnoreCase(cfg.getName()); } return true; }
-    public void openDebugWindow(){ try { if(debugWindow==null) debugWindow=new KPWebhookDebugWindow(this); if(!debugWindow.isVisible()) { debugWindow.setVisible(true); if(client.getGameState()==GameState.LOGGED_IN){ // log baseline
-                    baselineStatsLogged=true; for(Skill s: Skill.values()){ if(s==null) continue; int real=-1, boosted=-1; try { real=client.getRealSkillLevel(s);}catch(Exception ignored){} try { boosted=client.getBoostedSkillLevel(s);}catch(Exception ignored){ boosted=real; } if(real<=0 && boosted<=0) continue; debugWindow.logStat(s.name(), real, boosted); lastLoggedRealLevel.put(s, real); lastLoggedBoostedLevel.put(s, boosted); } }
-                }
-            else debugWindow.toFront(); } catch(Exception ignored){} }
-    public void openPresetDebugWindow(){ try { if(presetDebugWindow==null) presetDebugWindow=new KPWebhookPresetDebugWindow(); if(!presetDebugWindow.isVisible()) presetDebugWindow.setVisible(true); else presetDebugWindow.toFront(); } catch(Exception ignored){} }
-
-    // === Wilderness / PvP helpers for INTERACTING trigger ===
-    private static final int VARBIT_WILDERNESS_LEVEL = 5963; // fallback id for wilderness level
-    private int getWildernessLevel(){ try { return client.getVarbitValue(VARBIT_WILDERNESS_LEVEL); } catch(Exception e){ return 0; } }
-    private boolean isInWilderness(){ return getWildernessLevel() > 0; }
-    private boolean isPvPWorld(){ try { EnumSet<WorldType> types = client.getWorldType(); return types!=null && (types.contains(WorldType.PVP) || types.contains(WorldType.HIGH_RISK) || types.contains(WorldType.DEADMAN) || types.contains(WorldType.SEASONAL)); } catch(Exception e){ return false; } }
-    private boolean isAttackablePerRules(Player local, Player other){ if(local==null || other==null) return false; int l=0,o=0; try { l=local.getCombatLevel(); o=other.getCombatLevel(); } catch(Exception ignored){} int diff=Math.abs(l-o); boolean pvp=isPvPWorld(); int wild=getWildernessLevel(); int maxDiff; if(wild>0){ maxDiff = wild + (pvp?15:0); } else if(pvp){ maxDiff=15; } else return false; return diff <= maxDiff; }
-    public boolean isShowLastTriggered(){ try { return userSettings!=null && userSettings.isShowLastTriggered(); } catch(Exception e){ return false; } }
-    public void setShowLastTriggered(boolean v){ try { if(userSettings!=null){ userSettings.setShowLastTriggered(v); userSettings.save(); } scheduleLastTriggeredRefresh(); } catch(Exception ignored){} }
-    // Category expanded state persistence
-    public Map<String, Boolean> getCategoryExpandedStates(){ try { return userSettings!=null? userSettings.getCategoryExpandedStates(): new HashMap<>(); } catch(Exception e){ return new HashMap<>(); } }
-    public void setCategoryExpandedState(String key, boolean expanded){ try { if(userSettings!=null && key!=null){ userSettings.getCategoryExpandedStates().put(key, expanded); userSettings.save(); } } catch(Exception ignored){} }
-    @Subscribe
-    public void onConfigChanged(net.runelite.client.events.ConfigChanged ev){ if(ev==null) return; if("kpwebhook".equals(ev.getGroup())){ if("showLastTriggered".equals(ev.getKey())){ // only mirror BEFORE migration; afterwards user's external choice wins
-            try { if(userSettings!=null && !userSettings.isMigratedShowLastTriggered()){ boolean val = config!=null && config.showLastTriggered(); setShowLastTriggered(val); if(panel!=null) javax.swing.SwingUtilities.invokeLater(panel::refreshTable); } } catch(Exception ignored){} }
-        }
-    }
-    @Subscribe public void onGameStateChanged(GameStateChanged ev){
-        if(ev.getGameState()==GameState.LOGGED_IN){
-            for(KPWebhookPreset p: rules){ if(p!=null) p.setLastTriggeredAt(0L); }
-            if(panel!=null){ SwingUtilities.invokeLater(() -> { if(panel!=null) panel.refreshTable(); }); }
-        }
-    }
+    private Color parseColor(String hex, Color fallback){ if(hex==null||hex.isBlank()) return fallback; try { return Color.decode(hex.trim()); } catch(Exception ignored){ return fallback; } }
 }

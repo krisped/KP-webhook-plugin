@@ -30,6 +30,10 @@ public class KPWebhookDebugWindow extends JFrame {
     private final JLabel countLabel;
     private int totalRows = 0;
     private static final int MAX_ROWS = 800;
+    // New: item spawn filter UI + parsed tokens
+    private final JTextField itemSpawnFilterField = new JTextField(18);
+    private volatile java.util.List<java.util.function.Predicate<ItemSpawnRecord>> itemSpawnPredicates = java.util.List.of();
+    private static class ItemSpawnRecord { final int id; final String name; final int qty; ItemSpawnRecord(int id,String name,int qty){this.id=id; this.name=name==null?"":name; this.qty=qty;} }
 
     private static final String[] TRIGGERS = {
             // Alphabetical list (extended with projectile and new core triggers)
@@ -37,12 +41,15 @@ public class KPWebhookDebugWindow extends JFrame {
             "GEAR_CHANGED","TARGET_GEAR_CHANGED",
             "GRAPHIC_ANY","GRAPHIC_SELF","GRAPHIC_TARGET",
             "HITSPLAT_SELF","HITSPLAT_TARGET",
+            "INTERACTING", // added
+            "ITEM_SPAWN", // new item spawn trigger
             // removed IDLE
             "MANUAL", // new
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
             "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
             "REGION",
-            "STAT","TARGET","TICK","VARBIT","VARPLAYER","WIDGET" // added TARGET & TICK
+            "STAT","TARGET","TICK","VARBIT","VARPLAYER","WIDGET",
+            "XP_DROP" // added
     };
     private final Set<String> selectedTriggers = new LinkedHashSet<>();
     private final MultiSelectCombo triggerCombo;
@@ -123,6 +130,15 @@ public class KPWebhookDebugWindow extends JFrame {
         top.add(searchField);
         top.add(clearBtn);
         top.add(countLabel);
+        top.add(new JLabel("Item filter:"));
+        itemSpawnFilterField.setToolTipText("Filter ITEM_SPAWN: kommaseparerte id, navn, delnavn eller *wildcards*. Eksempel: bronze_bar,plate,2345");
+        itemSpawnFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){
+            private void upd(){ rebuildItemSpawnPredicates(); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e){ upd(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e){ upd(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e){ upd(); }
+        });
+        top.add(itemSpawnFilterField);
         add(top, BorderLayout.NORTH);
     }
 
@@ -259,6 +275,14 @@ public class KPWebhookDebugWindow extends JFrame {
         String display = name.isEmpty()? ("("+itemId+")") : name + " ("+itemId+")";
         logRow(target?"TARGET_GEAR_CHANGED":"GEAR_CHANGED", String.valueOf(itemId), "ITEM", display, "");
     }
+    public void logXpDrop(String skillName, int gained){ logRow("XP_DROP", String.valueOf(gained), "SKILL", nz(skillName), ""); } // new
+    public void logInteractionPlayer(String playerName, int combat){ logRow("INTERACTING", combat>0?String.valueOf(combat):"", "PLAYER", nz(playerName), ""); } // new
+    public void logInteractionNpc(String npcName, int npcId){ String nm = nz(npcName); if(!nm.isBlank()) nm = nm + (npcId>0?" ("+npcId+")":""); logRow("INTERACTING", npcId>0?String.valueOf(npcId):"", "NPC", nm, ""); } // new
+    public void logItemSpawn(int itemId, String itemName, int qty){
+        ItemSpawnRecord rec = new ItemSpawnRecord(itemId, itemName, qty);
+        if(!itemSpawnMatches(rec)) return; // filter out
+        logRow("ITEM_SPAWN", String.valueOf(itemId), "ITEM", nz(itemName), "qty="+qty);
+    } // new
 
     private String build(String base, String detail) { return detail==null||detail.isBlank()? base : base+" "+detail; }
 
@@ -275,6 +299,34 @@ public class KPWebhookDebugWindow extends JFrame {
                 int last = model.getRowCount()-1; if (last>=0) table.scrollRectToVisible(table.getCellRect(last,0,true));
             }
         });
+    }
+
+    // New: build predicates for item spawn filtering
+    private void rebuildItemSpawnPredicates(){
+        String raw = itemSpawnFilterField.getText();
+        if(raw==null || raw.isBlank()){ itemSpawnPredicates = java.util.List.of(); return; }
+        String[] parts = raw.split(",");
+        java.util.List<java.util.function.Predicate<ItemSpawnRecord>> preds = new java.util.ArrayList<>();
+        for(String p: parts){
+            String tok = p.trim(); if(tok.isEmpty()) continue;
+            // numeric id
+            try { int id = Integer.parseInt(tok); preds.add(r -> r.id == id); continue; } catch (Exception ignored) {}
+            String norm = tok.toLowerCase(Locale.ROOT).replace('_',' ');
+            if(norm.contains("*")){
+                // wildcard -> regex
+                String regex = norm.replace("*", ".*?");
+                try { java.util.regex.Pattern pat = java.util.regex.Pattern.compile("^"+regex+"$"); preds.add(r -> pat.matcher(r.name.toLowerCase(Locale.ROOT)).find()); continue; } catch (Exception ignored) {}
+            }
+            // substring match (case-insensitive) on normalized name
+            preds.add(r -> r.name.toLowerCase(Locale.ROOT).contains(norm));
+        }
+        itemSpawnPredicates = preds.isEmpty()? java.util.List.of() : java.util.List.copyOf(preds);
+    }
+    private boolean itemSpawnMatches(ItemSpawnRecord rec){
+        java.util.List<java.util.function.Predicate<ItemSpawnRecord>> preds = itemSpawnPredicates;
+        if(preds==null || preds.isEmpty()) return true; // no filter => accept all
+        for(java.util.function.Predicate<ItemSpawnRecord> pr: preds){ try { if(pr.test(rec)) return true; } catch (Exception ignored) {} }
+        return false;
     }
 
     /* ================= Search ================= */

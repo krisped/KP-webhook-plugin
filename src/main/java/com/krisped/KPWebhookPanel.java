@@ -384,9 +384,10 @@ public class KPWebhookPanel extends PluginPanel {
             @Override public void mouseReleased(MouseEvent e){ if(dragState.active){ commitDrag(); } resetDrag(); }
         }; for(JComponent c:new JComponent[]{row,center,titleLbl,indicator}){ c.addMouseListener(dragAdapter); c.addMouseMotionListener(dragAdapter);}
         // Alternating background colors for outer frame
-        Color base1 = new Color(55,55,55,180);
-        Color base2 = new Color(45,45,45,180);
-        Color activeOverlay = new Color(60,90,60,90); // subtle green tint overlay for active presets (blended)
+        // (Changed to fully opaque colors to avoid underlying text showing through semi-transparent backgrounds)
+        Color base1 = new Color(55,55,55); // removed alpha
+        Color base2 = new Color(45,45,45); // removed alpha
+        Color activeOverlay = new Color(70,100,70); // opaque tint for active presets
         boolean useAlt = (stripeIndex % 2)==1;
         Color chosen = useAlt? base2 : base1;
         // Common border & filled background
@@ -402,13 +403,12 @@ public class KPWebhookPanel extends PluginPanel {
         } else {
             outer.add(row);
         }
-        // Apply background after constructing to maybe blend active tint
+        // Apply background after constructing (opaque now, previously semi-transparent caused ghosting)
         if(preset.isActive()){
-            // Blend chosen with active overlay manually (simple average)
             int r=(chosen.getRed()+activeOverlay.getRed())/2;
             int g=(chosen.getGreen()+activeOverlay.getGreen())/2;
             int b=(chosen.getBlue()+activeOverlay.getBlue())/2;
-            outer.setBackground(new Color(r,g,b, chosen.getAlpha()));
+            outer.setBackground(new Color(r,g,b));
         } else {
             outer.setBackground(chosen);
         }

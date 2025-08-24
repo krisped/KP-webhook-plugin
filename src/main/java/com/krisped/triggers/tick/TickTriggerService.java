@@ -99,6 +99,8 @@ public class TickTriggerService {
                     targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.OTHERS;
                 } else if (t0.equals("PLAYER_SPAWN")) {
                     targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.PLAYER_SPAWN;
+                } else if (t0.equals("ITEM_SPAWN")) {
+                    targetType = com.krisped.commands.highlight.ActiveHighlight.TargetType.ITEM_SPAWN;
                 }
             }
         }
@@ -155,6 +157,7 @@ public class TickTriggerService {
             else if (t0.equals("CLAN_MEMBERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.CLAN_MEMBERS; working = working.substring(toks[0].length()).trim(); }
             else if (t0.equals("OTHERS")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.OTHERS; working = working.substring(toks[0].length()).trim(); }
             else if (t0.equals("PLAYER_SPAWN")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.PLAYER_SPAWN; working = working.substring(toks[0].length()).trim(); }
+            else if (t0.equals("ITEM_SPAWN")) { targetType = KPWebhookPlugin.ActiveOverheadText.TargetType.ITEM_SPAWN; working = working.substring(toks[0].length()).trim(); }
         }
         if (working.isEmpty()) return;
         working = tokenService.expand(working, ctx); // final expansion post target removal

@@ -36,6 +36,10 @@ public final class TokenDocumentation {
         m.put("${npcName}", new String[]{"Matched NPC name (NPC_* triggers).", "NOTIFY NPC ${npcName}"});
         m.put("${npcId}", new String[]{"Matched NPC id (NPC_* triggers).", "NOTIFY NPC id ${npcId}"});
         m.put("Skill tokens", new String[]{"Each skill: $SKILL (real), $CURRENT_SKILL (boosted).", "NOTIFY HP $HITPOINTS/$CURRENT_HITPOINTS"});
+        m.put("ITEM_SPAWN", new String[]{"World location (x,y,plane) of last matching ground item spawn.", "HIGHLIGHT_LINE ITEM_SPAWN"});
+        m.put("$ITEM_SPAWN", new String[]{"Name of last ground item that spawned.", "TEXT_OVER ITEM_SPAWN $ITEM_SPAWN"});
+        m.put("LOOT_DROP", new String[]{"World location (x,y,plane) of last loot drop (matches min value filter).", "TEXT_OVER LOCAL_PLAYER Loot at ${LOOT_DROP}"});
+        m.put("$LOOT_DROP", new String[]{"Name of last loot drop item (after min value filter).", "NOTIFY Loot $LOOT_DROP"});
         return Collections.unmodifiableMap(m);
     }
 }

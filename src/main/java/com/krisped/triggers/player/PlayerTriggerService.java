@@ -35,7 +35,7 @@ public class PlayerTriggerService {
     public void onPlayerSpawned(PlayerSpawned ev){
         if(ev==null) return; Player p = ev.getPlayer(); if(p==null) return; KPWebhookPlugin pl = plugin; if(pl==null) return; boolean self = client.getLocalPlayer()==p;
         if(tokenService!=null) try { tokenService.updatePlayerSpawnToken(p,false); } catch(Exception ignored){}
-        pl.logPlayerSpawn(false, p); // debug window logging
+        // removed debug window logging to avoid dependency on plugin private API
         List<KPWebhookPreset> rules = pl.getRules();
         for(KPWebhookPreset r: rules){
             if(r==null || !r.isActive()) continue;
@@ -49,7 +49,7 @@ public class PlayerTriggerService {
     public void onPlayerDespawned(PlayerDespawned ev){
         if(ev==null) return; Player p = ev.getPlayer(); if(p==null) return; KPWebhookPlugin pl = plugin; if(pl==null) return; boolean self = client.getLocalPlayer()==p;
         if(tokenService!=null) try { tokenService.updatePlayerSpawnToken(p,true); } catch(Exception ignored){}
-        pl.logPlayerSpawn(true, p);
+        // removed debug window logging to avoid dependency on plugin private API
         List<KPWebhookPreset> rules = pl.getRules();
         for(KPWebhookPreset r: rules){
             if(r==null || !r.isActive()) continue;
@@ -58,6 +58,8 @@ public class PlayerTriggerService {
             }
         }
     }
+
+    private String sanitizePlayerName(String n){ if(n==null) return ""; try { String nt = net.runelite.client.util.Text.removeTags(n); return nt.replace('\u00A0',' ').trim(); } catch(Exception e){ return n.replace('\u00A0',' ').trim(); } }
 
     private boolean playerMatches(KPWebhookPreset.PlayerConfig cfg, Player p, boolean self){
         if(cfg==null) return true; // no filter
@@ -71,14 +73,12 @@ public class PlayerTriggerService {
         }
         List<String> names = cfg.getNames();
         if(names!=null && !names.isEmpty()){
-            KPWebhookPlugin pl = plugin; if(pl==null) return false;
-            String pn = pl.sanitizePlayerName(p.getName()).toLowerCase(Locale.ROOT);
+            String pn = sanitizePlayerName(p.getName()).toLowerCase(Locale.ROOT);
             for(String n: names){ if(pn.equals(n)) return true; }
             return false;
         }
         if(cfg.getName()!=null && !cfg.getName().isBlank()){
-            KPWebhookPlugin pl = plugin; if(pl==null) return false;
-            return pl.sanitizePlayerName(p.getName()).equalsIgnoreCase(cfg.getName());
+            return sanitizePlayerName(p.getName()).equalsIgnoreCase(cfg.getName());
         }
         return true;
     }

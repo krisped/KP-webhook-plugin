@@ -80,6 +80,8 @@ public class HighlightCommandHandler {
                     targetType = ActiveHighlight.TargetType.PLAYER_SPAWN;
                 } else if (t0.equals("INTERACTION")) {
                     targetType = ActiveHighlight.TargetType.INTERACTION;
+                } else if (t0.equals("ITEM_SPAWN")) {
+                    targetType = ActiveHighlight.TargetType.ITEM_SPAWN;
                 }
             }
         }

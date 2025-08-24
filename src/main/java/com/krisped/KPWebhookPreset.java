@@ -45,6 +45,7 @@ public class KPWebhookPreset
         INVENTORY_ITEM_REMOVED, // new: matching item removed from inventory
         DEATH, // new: local player death
         LOOT_DROP, // new: ground item spawn matching filter
+        ITEM_SPAWN, // new: ground item spawn (explicit trigger with item filter)
         XP_DROP, // new: experience changed threshold (above/below total XP)
         INTERACTING // new: another player starts interacting with you
     }
@@ -237,6 +238,19 @@ public class KPWebhookPreset
         private java.util.List<Integer> itemIds;
         private java.util.List<String> names;
         private java.util.List<String> wildcards;
+        private Integer minValue; // new: minimum total stack value (price * qty) required to trigger
+    }
+
+    // New item spawn config (same structure as LootConfig, kept separate for clarity)
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ItemSpawnConfig {
+        private java.util.List<Integer> itemIds;
+        private java.util.List<String> names; // exact lowercase names (underscores converted to spaces)
+        private java.util.List<String> wildcards; // patterns with *
     }
 
     // New XP config
@@ -301,6 +315,7 @@ public class KPWebhookPreset
     private RegionConfig regionConfig; // new region trigger config
     private InventoryConfig inventoryConfig; // new inventory trigger config
     private LootConfig lootConfig; // new loot drop trigger config
+    private ItemSpawnConfig itemSpawnConfig; // new item spawn trigger config
     private XpConfig xpConfig; // new xp drop trigger config
     private InteractingConfig interactingConfig; // new interacting trigger config
     private TargetConfig targetConfig; // new target filter config
@@ -634,6 +649,15 @@ public class KPWebhookPreset
                     if(lootConfig.getItemIds()!=null && !lootConfig.getItemIds().isEmpty()) b+=" "+shortJoin(lootConfig.getItemIds());
                     else if(lootConfig.getNames()!=null && !lootConfig.getNames().isEmpty()) b+=" "+lootConfig.getNames().get(0)+(lootConfig.getNames().size()>1?",...":"");
                     else if(lootConfig.getWildcards()!=null && !lootConfig.getWildcards().isEmpty()) b+=" "+lootConfig.getWildcards().get(0);
+                    if(lootConfig.getMinValue()!=null && lootConfig.getMinValue()>0) b+=" >="+lootConfig.getMinValue();
+                    return b;
+                }
+            case ITEM_SPAWN:
+                if(itemSpawnConfig==null) return "ITEM_SPAWN"; {
+                    String b="ITEM_SPAWN";
+                    if(itemSpawnConfig.getItemIds()!=null && !itemSpawnConfig.getItemIds().isEmpty()) b+=" "+shortJoin(itemSpawnConfig.getItemIds());
+                    else if(itemSpawnConfig.getNames()!=null && !itemSpawnConfig.getNames().isEmpty()) b+=" "+itemSpawnConfig.getNames().get(0)+(itemSpawnConfig.getNames().size()>1?",...":"");
+                    else if(itemSpawnConfig.getWildcards()!=null && !itemSpawnConfig.getWildcards().isEmpty()) b+=" "+itemSpawnConfig.getWildcards().get(0);
                     return b;
                 }
             case XP_DROP:

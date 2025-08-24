@@ -29,6 +29,23 @@ public class TokenService {
     @Getter private String lastInteraction = "";
     private String lastInteractionNameLower = ""; // new raw lower name
 
+    // New: last item spawn (name + world point)
+    @Getter private String lastItemSpawnName = ""; // raw item name
+    private net.runelite.api.coords.WorldPoint lastItemSpawnPoint = null;
+    // New: last loot drop (after min value filter)
+    @Getter private String lastLootDropName = ""; // raw item name
+    private net.runelite.api.coords.WorldPoint lastLootDropPoint = null;
+
+    public net.runelite.api.coords.WorldPoint getLastItemSpawnPoint(){ return lastItemSpawnPoint; }
+    public void updateLastItemSpawn(String itemName, net.runelite.api.coords.WorldPoint wp){
+        this.lastItemSpawnName = itemName==null?"":itemName.trim();
+        this.lastItemSpawnPoint = wp;
+    }
+    public void updateLastLootDrop(String itemName, net.runelite.api.coords.WorldPoint wp){
+        this.lastLootDropName = itemName==null?"":itemName.trim();
+        this.lastLootDropPoint = wp;
+    }
+
     /** Aggregated recent spawns (name -> epoch ms) */
     private final LinkedHashMap<String, Long> recentPlayerSpawns = new LinkedHashMap<>();
     private final Map<String,String> recentPlayerSpawnOriginal = new HashMap<>();
@@ -126,6 +143,20 @@ public class TokenService {
         ctx.put("INTERACTION", lastInteraction);
         ctx.put("interaction", lastInteraction);
         ctx.put("$INTERACTION", lastInteraction);
+        // New item spawn tokens
+        String itemLoc=""; if(lastItemSpawnPoint!=null){ itemLoc= lastItemSpawnPoint.getX()+","+ lastItemSpawnPoint.getY()+","+ lastItemSpawnPoint.getPlane(); }
+        ctx.put("ITEM_SPAWN", itemLoc); // location
+        ctx.put("item_spawn", itemLoc);
+        ctx.put("$ITEM_SPAWN", lastItemSpawnName); // name
+        ctx.put("ITEM_SPAWN_NAME", lastItemSpawnName);
+        ctx.put("$ITEM_SPAWN_NAME", lastItemSpawnName);
+        // New loot drop tokens (location + name)
+        String lootLoc=""; if(lastLootDropPoint!=null){ lootLoc = lastLootDropPoint.getX()+","+ lastLootDropPoint.getY()+","+ lastLootDropPoint.getPlane(); }
+        ctx.put("LOOT_DROP", lootLoc);
+        ctx.put("loot_drop", lootLoc);
+        ctx.put("$LOOT_DROP", lastLootDropName);
+        ctx.put("LOOT_DROP_NAME", lastLootDropName);
+        ctx.put("$LOOT_DROP_NAME", lastLootDropName);
         for(Skill s: Skill.values()){
             try {
                 int real = client.getRealSkillLevel(s);

@@ -45,37 +45,44 @@ public class StatTriggerService {
                         continue; // don't fire on initial snapshot
                     }
                     if(real > lastSeen){
-                        // level actually increased
                         plugin.executeStatRule(r, skill, real);
                         r.setLastSeenRealLevel(real);
-                        r.setLastConditionMet(true); // mark true (not really used for LEVEL_UP)
+                        r.setLastConditionMet(true);
                         plugin.savePresetPublic(r);
                     }
                     break;
                 }
                 case ABOVE: {
-                    boolean cond = real > cfg.getThreshold();
-                    handleThreshold(r, skill, real, cond, plugin);
+                    int compare = (skill == Skill.HITPOINTS)? boosted : real;
+                    boolean cond = compare > cfg.getThreshold();
+                    handleThreshold(r, skill, compare, cond, plugin);
                     break; }
                 case BELOW: {
-                    boolean cond = real < cfg.getThreshold();
-                    handleThreshold(r, skill, real, cond, plugin);
+                    int compare = (skill == Skill.HITPOINTS)? boosted : real;
+                    boolean cond = compare < cfg.getThreshold();
+                    handleThreshold(r, skill, compare, cond, plugin);
                     break; }
             }
         }
     }
 
-    private void handleThreshold(KPWebhookPreset r, Skill skill, int real, boolean cond, KPWebhookPlugin plugin){
+    // For ABOVE/BELOW: fire every time value changes while condition holds (and once immediately when entering condition)
+    private void handleThreshold(KPWebhookPreset r, Skill skill, int valueUsed, boolean cond, KPWebhookPlugin plugin){
         boolean prev = r.isLastConditionMet();
-        if(cond && !prev){
-            plugin.executeStatRule(r, skill, real);
-            r.setLastConditionMet(true);
-            plugin.savePresetPublic(r);
-        } else if(!cond && prev){
+        int lastFiredVal = r.getLastSeenRealLevel(); // reused to store last fired value in threshold modes
+        if(cond){
+            boolean valueChanged = (lastFiredVal != valueUsed);
+            if(!prev || valueChanged){
+                plugin.executeStatRule(r, skill, valueUsed);
+                r.setLastConditionMet(true);
+                r.setLastSeenRealLevel(valueUsed);
+                plugin.savePresetPublic(r);
+            }
+        } else if(prev){
             r.setLastConditionMet(false);
+            // keep lastSeenRealLevel so re-entry with same value still fires because prev=false triggers fire logic
             if(r.isForceCancelOnChange()) plugin.softCancelOnChangePublic(r);
             plugin.savePresetPublic(r);
         }
     }
 }
-

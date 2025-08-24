@@ -170,6 +170,40 @@ public class HighlightOverlay extends Overlay {
                             for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { renderHighlightFor(graphics,h,p); break; } }
                         }
                     }
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.ITEM_SPAWN) {
+                    // Draw tile highlight (and optional line) at last item spawn location
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastItemSpawnPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        if(h.getType()==HighlightType.TILE || h.getType()==HighlightType.OUTLINE || h.getType()==HighlightType.HULL){
+                                            graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                                            graphics.setColor(h.getColor());
+                                            graphics.draw(poly);
+                                        } else if(h.getType()==HighlightType.LINE){
+                                            Player localPl = client.getLocalPlayer();
+                                            if(localPl!=null){
+                                                LocalPoint lpLocal = localPl.getLocalLocation();
+                                                Polygon polyLocal = lpLocal!=null? Perspective.getCanvasTilePoly(client, lpLocal): null;
+                                                if(polyLocal!=null){
+                                                    Rectangle b1 = polyLocal.getBounds();
+                                                    Rectangle b2 = poly.getBounds();
+                                                    int x1=b1.x+b1.width/2; int y1=b1.y+b1.height/2; int x2=b2.x+b2.width/2; int y2=b2.y+b2.height/2;
+                                                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                                                    graphics.setColor(h.getColor());
+                                                    graphics.drawLine(x1,y1,x2,y2);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
                 }
             }
         }
@@ -221,6 +255,23 @@ public class HighlightOverlay extends Overlay {
                     if(!recent.isEmpty()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(recent.contains(n)) drawTextOverEntity(graphics,p,aot); }
                 } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.INTERACTION) { // new: overhead text on last interacting player
                     if(tokenService!=null){ String last=tokenService.getLastInteractionNameLower(); if(last!=null && !last.isBlank()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { drawTextOverEntity(graphics,p,aot); break; } } }
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.ITEM_SPAWN) {
+                    // Custom draw over last item spawn tile
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastItemSpawnPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        Rectangle b = poly.getBounds();
+                                        drawTextAtBounds(graphics, b, aot);
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
                 }
             }
         }
@@ -271,6 +322,22 @@ public class HighlightOverlay extends Overlay {
                     if(!recent.isEmpty()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(recent.contains(n)) drawImageOverEntity(graphics,p,oi); }
                 } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.INTERACTION) { // new: overhead image on last interacting player
                     if(tokenService!=null){ String last=tokenService.getLastInteractionNameLower(); if(last!=null && !last.isBlank()) for(Player p: players){ if(p==null||p==local||p.getName()==null) continue; String n=p.getName().replace('_',' ').trim().toLowerCase(); if(n.equals(last)) { drawImageOverEntity(graphics,p,oi); break; } } }
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.ITEM_SPAWN) {
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastItemSpawnPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        Rectangle b = poly.getBounds();
+                                        drawImageAtBounds(graphics, b, oi);
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
                 }
             }
         }
@@ -702,4 +769,8 @@ public class HighlightOverlay extends Overlay {
         try { java.lang.reflect.Method m = p.getClass().getMethod("getTeam"); Object r = m.invoke(p); if(r instanceof Integer) return (Integer)r; } catch(Exception ignored){}
         return -1;
     }
+
+    private void drawTextAtBounds(Graphics2D g, Rectangle b, KPWebhookPlugin.ActiveOverheadText aot){
+        if(b==null || aot==null) return; int style=Font.PLAIN; if(aot.isBold()) style|=Font.BOLD; if(aot.isItalic()) style|=Font.ITALIC; Font base=FontManager.getRunescapeBoldFont(); Font use=base.deriveFont(style,(float)aot.getSize()); Font old=g.getFont(); g.setFont(use); FontMetrics fm=g.getFontMetrics(); int ascent=fm.getAscent(); int textW=fm.stringWidth(aot.getText()); int xCenter=b.x+b.width/2; int drawX=xCenter - textW/2; int drawY; switch(aot.getPosition()){ case "Above": drawY=b.y-4; break; case "Center": drawY=b.y+(b.height/2)+(ascent/2); break; case "Under": default: drawY=b.y+b.height+ascent; break;} g.setColor(Color.BLACK); for(int dx=-1;dx<=1;dx++) for(int dy=-1;dy<=1;dy++) if(dx!=0||dy!=0) g.drawString(aot.getText(), drawX+dx, drawY+dy); g.setColor(aot.getColor()!=null? aot.getColor(): Color.WHITE); g.drawString(aot.getText(), drawX, drawY); if(aot.isUnderline()){ g.drawLine(drawX, drawY+1, drawX+textW, drawY+1);} g.setFont(old); }
+    private void drawImageAtBounds(Graphics2D g, Rectangle b, ActiveOverheadImage oi){ if(b==null||oi==null||oi.getImage()==null) return; BufferedImage img=oi.getImage(); int x=b.x + (b.width - img.getWidth())/2; int y=b.y - img.getHeight(); g.drawImage(img, x, y, null); }
 }

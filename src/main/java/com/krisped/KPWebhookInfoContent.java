@@ -99,6 +99,7 @@ public final class KPWebhookInfoContent {
         triggers.put("INVENTORY_ITEM_ADDED", new Info("Item lagt til i inventory matcher filter (id, navn, substring eller *wildcard*).", "INVENTORY_ITEM_ADDED 2351"));
         triggers.put("INVENTORY_CONTAINS_NONE", new Info("Inventory inneholder ingen av oppførte items (id/navn/substr/wildcard). Force-cancel = trigges så lenge det er sant.", "INVENTORY_CONTAINS_NONE food*"));
         triggers.put("INTERACTING", new Info("En annen spiller begynner å interaktere med deg (kan filtreres med opsjonene i triggerpanelet).", "INTERACTING"));
+        triggers.put("LOOT_DROP", new Info("Et hvilket som helst ground item (loot) som spawner og oppfyller minimumsverdi (ingen item-filter lenger).", "LOOT_DROP minValue=50000"));
 
         // TOKENS (token -> Info)
         Map<String, Info> tokens = new HashMap<>();
