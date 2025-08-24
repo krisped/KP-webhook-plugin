@@ -35,16 +35,28 @@ public class TokenService {
     // New: last loot drop (after min value filter)
     @Getter private String lastLootDropName = ""; // raw item name
     private net.runelite.api.coords.WorldPoint lastLootDropPoint = null;
+    // New: last NPC spawn (name + location)
+    @Getter private String lastNpcSpawnName = ""; // raw sanitized NPC name
+    private net.runelite.api.coords.WorldPoint lastNpcSpawnPoint = null;
+    private final LinkedHashMap<String, Long> recentNpcSpawns = new LinkedHashMap<>(); // lower-case npc name -> ts
+    private static final long RECENT_NPC_SPAWN_WINDOW_MS = 7000L;
 
     public net.runelite.api.coords.WorldPoint getLastItemSpawnPoint(){ return lastItemSpawnPoint; }
     public net.runelite.api.coords.WorldPoint getLastLootDropPoint(){ return lastLootDropPoint; }
-    public void updateLastItemSpawn(String itemName, net.runelite.api.coords.WorldPoint wp){
-        this.lastItemSpawnName = itemName==null?"":itemName.trim();
-        this.lastItemSpawnPoint = wp;
-    }
-    public void updateLastLootDrop(String itemName, net.runelite.api.coords.WorldPoint wp){
-        this.lastLootDropName = itemName==null?"":itemName.trim();
-        this.lastLootDropPoint = wp;
+    public net.runelite.api.coords.WorldPoint getLastNpcSpawnPoint(){ return lastNpcSpawnPoint; }
+    public void updateLastItemSpawn(String itemName, net.runelite.api.coords.WorldPoint wp){ this.lastItemSpawnName = itemName==null?"":itemName.trim(); this.lastItemSpawnPoint = wp; }
+    public void updateLastLootDrop(String itemName, net.runelite.api.coords.WorldPoint wp){ this.lastLootDropName = itemName==null?"":itemName.trim(); this.lastLootDropPoint = wp; }
+    // New: update NPC spawn token
+    public void updateNpcSpawnToken(NPC npc){ if(npc==null) return; try { lastNpcSpawnName = sanitizeNpcName(npc.getName()); lastNpcSpawnPoint = npc.getWorldLocation(); long now=System.currentTimeMillis(); if(lastNpcSpawnName!=null){ String low= lastNpcSpawnName.toLowerCase(Locale.ROOT); recentNpcSpawns.put(low, now); pruneRecentNpcSpawns(now);} } catch(Exception ignored){} }
+
+    private void pruneRecentNpcSpawns(long now){ // remove stale npc spawn entries
+        try {
+            java.util.Iterator<java.util.Map.Entry<String,Long>> it = recentNpcSpawns.entrySet().iterator();
+            while(it.hasNext()){
+                java.util.Map.Entry<String,Long> e = it.next();
+                if(now - e.getValue() > RECENT_NPC_SPAWN_WINDOW_MS) it.remove();
+            }
+        } catch(Exception ignored){}
     }
 
     /** Aggregated recent spawns (name -> epoch ms) */
@@ -101,8 +113,19 @@ public class TokenService {
         try { if(client.getLocalPlayer()!=null) local = sanitizePlayerName(client.getLocalPlayer().getName()); } catch(Exception ignored){}
         ctx.put("player", local);
         ctx.put("RSN", local); ctx.put("$RSN", local); ctx.put("rsn", local); // new alias for local player name
-        ctx.put("TARGET", currentTargetName!=null? currentTargetName : "");
+        // Determine trigger location (player or npc that caused the rule, else local player)
+        String targetLocation = "";
+        try {
+            net.runelite.api.coords.WorldPoint wp = null;
+            if(otherPlayer != null) wp = otherPlayer.getWorldLocation();
+            else if(npc != null) wp = npc.getWorldLocation();
+            else if(client.getLocalPlayer() != null) wp = client.getLocalPlayer().getWorldLocation();
+            if(wp != null) targetLocation = wp.getX()+","+wp.getY()+","+wp.getPlane();
+        } catch(Exception ignored){}
+        ctx.put("TARGET", targetLocation); // location of triggering entity
+        ctx.put("TARGET_NAME", currentTargetName!=null? currentTargetName : "");
         ctx.put("$TARGET", currentTargetName!=null? currentTargetName : "");
+        ctx.put("$TARGET_NAME", currentTargetName!=null? currentTargetName : "");
         ctx.put("stat", skill!=null? skill.name(): "");
         ctx.put("value", value>=0? String.valueOf(value): "");
         try { ctx.put("current", skill!=null? String.valueOf(client.getBoostedSkillLevel(skill)) : ""); } catch(Exception ignored){ ctx.put("current", ""); }
@@ -167,6 +190,9 @@ public class TokenService {
         ctx.putIfAbsent("$ITEMSPAWN", itemLoc);
         ctx.putIfAbsent("ITEMSPAWN", itemLoc);
         ctx.putIfAbsent("$ITEMSPAWN_NAME", lastItemSpawnName);
+        // New NPC_SPAWN tokens (location + name)
+        String npcSpawnLoc=""; if(lastNpcSpawnPoint!=null){ npcSpawnLoc = lastNpcSpawnPoint.getX()+","+ lastNpcSpawnPoint.getY()+","+ lastNpcSpawnPoint.getPlane(); }
+        ctx.put("NPC_SPAWN", npcSpawnLoc); ctx.put("npc_spawn", npcSpawnLoc); ctx.put("$NPC_SPAWN", lastNpcSpawnName); ctx.put("NPC_SPAWN_NAME", lastNpcSpawnName); ctx.put("$NPC_SPAWN_NAME", lastNpcSpawnName);
         for(Skill s: Skill.values()){
             try {
                 int real = client.getRealSkillLevel(s);
@@ -195,6 +221,7 @@ public class TokenService {
     private String buildAggregatedRecentSpawns(){
         long now = System.currentTimeMillis(); pruneRecentSpawns(now); if(recentPlayerSpawns.isEmpty()) return ""; StringBuilder sb=new StringBuilder(); for(String low: recentPlayerSpawns.keySet()){ if(sb.length()>0) sb.append(", "); String orig = recentPlayerSpawnOriginal.getOrDefault(low, low); sb.append(orig); } return sb.toString(); }
     public Set<String> getRecentSpawnLowerNames(){ pruneRecentSpawns(System.currentTimeMillis()); return new HashSet<>(recentPlayerSpawns.keySet()); }
+    public Set<String> getRecentNpcSpawnLowerNames(){ pruneRecentNpcSpawns(System.currentTimeMillis()); return new HashSet<>(recentNpcSpawns.keySet()); }
 
     /** Expand tokens inside a string. */
     public String expand(String input, Map<String,String> ctx){
@@ -210,7 +237,12 @@ public class TokenService {
                 String lk = k.toLowerCase(Locale.ROOT);
                 out = out.replace("${"+lk+"}", v).replace("{{"+lk+"}}", v);
             }
-            out = safeReplaceDollarToken(out, k, v);
+            // Only perform $TOKEN replacement if:
+            // 1) key itself starts with '$' OR
+            // 2) there is NOT a dedicated $ variant present (to avoid overriding more specific value)
+            if(k.startsWith("$") || !ctx.containsKey("$"+k)){
+                out = safeReplaceDollarToken(out, k, v);
+            }
         }
         return out;
     }

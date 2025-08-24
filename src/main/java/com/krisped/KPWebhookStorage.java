@@ -141,7 +141,10 @@ public class KPWebhookStorage
     private String migrateTriggerEnums(String json) {
         if (json == null) return null;
         return json.replace("\"triggerType\":\"HIT_SPLAT_SELF\"", "\"triggerType\":\"HITSPLAT_SELF\"")
-                .replace("\"triggerType\":\"HIT_SPLAT_TARGET\"", "\"triggerType\":\"HITSPLAT_TARGET\"");
+                .replace("\"triggerType\":\"HIT_SPLAT_TARGET\"", "\"triggerType\":\"HITSPLAT_TARGET\"")
+                // Legacy projectile variants now unified: incoming toward local player
+                .replace("\"triggerType\":\"PROJECTILE_ANY\"", "\"triggerType\":\"PROJECTILE\"")
+                .replace("\"triggerType\":\"PROJECTILE_TARGET\"", "\"triggerType\":\"PROJECTILE\"");
     }
 
     public void save(KPWebhookPreset preset, String previousTitle)

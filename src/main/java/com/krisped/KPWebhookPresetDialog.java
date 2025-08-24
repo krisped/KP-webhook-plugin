@@ -145,9 +145,9 @@ public class KPWebhookPresetDialog extends JDialog
             "#  TOGGLEPRESET <title> <1|0> - Activate/deactivate preset by exact title (1=on)\n" +
             "#  TOGGLEGROUP <category> <1|0> - Activate/deactivate all presets in category (1=on)\n" +
             "#  WEBHOOK <text>           - Send to Discord/webhook\n" +
-            "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id> | FRIEND_LIST | IGNORE_LIST | PARTY_MEMBERS | FRIENDS_CHAT | TEAM_MEMBERS | CLAN_MEMBERS | OTHERS\n" +
+            "# Targeting prefix (optional for HIGHLIGHT_* & TEXT_* & IMG_*): TARGET | LOCAL_PLAYER | PLAYER <navn> | NPC <navn|id> | FRIEND_LIST | IGNORE_LIST | PARTY_MEMBERS | FRIENDS_CHAT | TEAM_MEMBERS | CLAN_MEMBERS | OTHERS | PLAYER_SPAWN | NPC_SPAWN | ITEM_SPAWN | LOOT_DROP | INTERACTION\n" +
             "# IMG ids: positive = item id icon, negative = sprite id (e.g. -738)\n" +
-            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} $TARGET {{TARGET}} $HITSPLAT_SELF $HITSPLAT_TARGET $INTERACTION $PLAYER_SPAWN $PLAYER_DESPAWN\n" +
+            "# Tokens: {{player}} {{stat}} {{current}} {{value}} {{widgetGroup}} {{widgetChild}} {{time}} {{otherPlayer}} {{otherCombat}} ${TARGET}(loc) $TARGET(name) ${TARGET_NAME} $HITSPLAT_SELF $HITSPLAT_TARGET $INTERACTION $PLAYER_SPAWN $PLAYER_DESPAWN ${NPC_SPAWN} $NPC_SPAWN ${ITEM_SPAWN} $ITEM_SPAWN ${LOOT_DROP} $LOOT_DROP\n" +
             "\n" +
             "NOTIFY You gained a level in {{stat}}\n" +
             "HIGHLIGHT_OUTLINE TARGET\n" +
@@ -552,11 +552,7 @@ public class KPWebhookPresetDialog extends JDialog
             KPWebhookPreset.ProjectileConfig c = r.getProjectileConfig();
             if (c.getProjectileIds()!=null && !c.getProjectileIds().isEmpty()) projectileIdField.setText(listToString(c.getProjectileIds()));
             else if (c.getProjectileId()!=null) projectileIdField.setText(String.valueOf(c.getProjectileId()));
-        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE_TARGET && r.getProjectileConfig()!=null) {
-            KPWebhookPreset.ProjectileConfig c = r.getProjectileConfig();
-            if (c.getProjectileIds()!=null && !c.getProjectileIds().isEmpty()) projectileIdField.setText(listToString(c.getProjectileIds()));
-            else if (c.getProjectileId()!=null) projectileIdField.setText(String.valueOf(c.getProjectileId()));
-        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE_ANY && r.getProjectileConfig()!=null) {
+        } else if (r.getTriggerType()== KPWebhookPreset.TriggerType.PROJECTILE && r.getProjectileConfig()!=null) {
             KPWebhookPreset.ProjectileConfig c = r.getProjectileConfig();
             if (c.getProjectileIds()!=null && !c.getProjectileIds().isEmpty()) projectileIdField.setText(listToString(c.getProjectileIds()));
             else if (c.getProjectileId()!=null) projectileIdField.setText(String.valueOf(c.getProjectileId()));
@@ -763,10 +759,10 @@ public class KPWebhookPresetDialog extends JDialog
                     .graphicId(ids.size()==1?ids.get(0):null)
                     .build();
         }
-        else if (trig == KPWebhookPreset.TriggerType.PROJECTILE_SELF || trig == KPWebhookPreset.TriggerType.PROJECTILE_TARGET || trig == KPWebhookPreset.TriggerType.PROJECTILE_ANY) {
+        else if (trig == KPWebhookPreset.TriggerType.PROJECTILE_SELF || trig == KPWebhookPreset.TriggerType.PROJECTILE) {
             String raw = projectileIdField.getText()!=null? projectileIdField.getText().trim():"";
             java.util.List<Integer> ids = parseIntList(raw);
-            if (trig != KPWebhookPreset.TriggerType.PROJECTILE_ANY && ids.isEmpty()) { JOptionPane.showMessageDialog(this, "Minst én projectile ID påkrevd for "+trig.name()); return; }
+            if (trig == KPWebhookPreset.TriggerType.PROJECTILE_SELF && ids.isEmpty()) { JOptionPane.showMessageDialog(this, "Minst én projectile ID påkrevd for "+trig.name()); return; }
             projectileCfg = KPWebhookPreset.ProjectileConfig.builder()
                     .projectileIds(ids.isEmpty()?null:ids)
                     .projectileId(ids.size()==1?ids.get(0):null)
@@ -995,11 +991,14 @@ public class KPWebhookPresetDialog extends JDialog
         else if (KPWebhookPreset.TriggerType.TARGET.name().equals(sel)){
             cl.show(triggerCards, KPWebhookPreset.TriggerType.TARGET.name()); if(triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);
         }
+        else if (sel.equals(KPWebhookPreset.TriggerType.PROJECTILE.name()) || sel.startsWith("PROJECTILE_")) { // include unified incoming PROJECTILE and legacy underscore variants
+            cl.show(triggerCards, KPWebhookPreset.TriggerType.PROJECTILE_SELF.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);
+        }
         else if (KPWebhookPreset.TriggerType.PLAYER_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.PLAYER_DESPAWN.name().equals(sel))
         { cl.show(triggerCards, "PLAYER"); if (triggerDetailsPanel != null) triggerDetailsPanel.setVisible(true); }
         else if (KPWebhookPreset.TriggerType.NPC_SPAWN.name().equals(sel) || KPWebhookPreset.TriggerType.NPC_DESPAWN.name().equals(sel))
         { cl.show(triggerCards, "NPC"); if (triggerDetailsPanel != null) triggerDetailsPanel.setVisible(true); }
-        else if (sel.startsWith("PROJECTILE_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
+        else if (sel.startsWith("PROJECTILE_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.PROJECTILE_SELF.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (sel.startsWith("ANIMATION_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (sel.startsWith("GRAPHIC_")) { cl.show(triggerCards, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
         else if (KPWebhookPreset.TriggerType.IDLE.name().equals(sel)) { cl.show(triggerCards, KPWebhookPreset.TriggerType.IDLE.name()); if (triggerDetailsPanel!=null) triggerDetailsPanel.setVisible(true);}
@@ -1176,7 +1175,8 @@ public class KPWebhookPresetDialog extends JDialog
         cards.add(npcCard, "NPC"); // shared for NPC_SPAWN / NPC_DESPAWN
         cards.add(animationCard, KPWebhookPreset.TriggerType.ANIMATION_TARGET.name()); // used for SELF/TARGET/ANY
         cards.add(graphicCard, KPWebhookPreset.TriggerType.GRAPHIC_TARGET.name()); // used for SELF/TARGET/ANY
-        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_TARGET.name()); // used for SELF/TARGET/ANY
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE_SELF.name()); // shared for PROJECTILE_SELF/PROJECTILE
+        cards.add(projectileCard, KPWebhookPreset.TriggerType.PROJECTILE.name()); // alias key
         cards.add(hitsplatCard, KPWebhookPreset.TriggerType.HITSPLAT_TARGET.name()); // used for SELF/TARGET
         cards.add(messageCard, KPWebhookPreset.TriggerType.MESSAGE.name());
         cards.add(varbitCard, KPWebhookPreset.TriggerType.VARBIT.name());

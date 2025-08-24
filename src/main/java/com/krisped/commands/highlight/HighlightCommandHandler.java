@@ -84,6 +84,8 @@ public class HighlightCommandHandler {
                     targetType = ActiveHighlight.TargetType.ITEM_SPAWN;
                 } else if (t0.equals("LOOT_DROP")) {
                     targetType = ActiveHighlight.TargetType.LOOT_DROP;
+                } else if (t0.equals("NPC_SPAWN")) { // new: recently spawned NPCs
+                    targetType = ActiveHighlight.TargetType.NPC_SPAWN;
                 }
             }
         }

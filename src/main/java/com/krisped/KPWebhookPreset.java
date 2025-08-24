@@ -32,9 +32,8 @@ public class KPWebhookPreset
         VARPLAYER,
         TICK,
         TARGET,
-        PROJECTILE_SELF, // new
-        PROJECTILE_TARGET, // new
-        PROJECTILE_ANY, // new
+        PROJECTILE_SELF, // outgoing from local player
+        PROJECTILE, // incoming toward local player (replaces previous TARGET/ANY variants)
         IDLE, // newly added idle trigger
         GEAR_CHANGED, // new: local player equipment changed
         TARGET_GEAR_CHANGED, // new: target player equipment changed
@@ -548,15 +547,10 @@ public class KPWebhookPreset
                     java.util.List<Integer> pSelf = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
                     if (pSelf.isEmpty()) return "PROJECTILE_SELF ?"; return "PROJECTILE_SELF "+shortJoin(pSelf);
                 }
-            case PROJECTILE_TARGET:
-                if (projectileConfig==null) return "PROJECTILE_TARGET ?"; {
-                    java.util.List<Integer> pT = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
-                    if (pT.isEmpty()) return "PROJECTILE_TARGET ?"; return "PROJECTILE_TARGET "+shortJoin(pT);
-                }
-            case PROJECTILE_ANY:
-                if (projectileConfig==null) return "PROJECTILE_ANY (alle)"; {
-                    java.util.List<Integer> pAny = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
-                    if (pAny.isEmpty()) return "PROJECTILE_ANY (alle)"; return "PROJECTILE_ANY "+shortJoin(pAny);
+            case PROJECTILE:
+                if (projectileConfig==null) return "PROJECTILE (incoming)"; {
+                    java.util.List<Integer> pIn = projectileConfig.getProjectileIds()!=null? projectileConfig.getProjectileIds(): (projectileConfig.getProjectileId()!=null? java.util.List.of(projectileConfig.getProjectileId()): java.util.List.of());
+                    if (pIn.isEmpty()) return "PROJECTILE (incoming)"; return "PROJECTILE "+shortJoin(pIn);
                 }
             case HITSPLAT_SELF:
                 if (hitsplatConfig==null) return "HITSPLAT_SELF ?";

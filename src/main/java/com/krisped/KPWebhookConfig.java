@@ -103,4 +103,21 @@ public interface KPWebhookConfig extends Config
             position = 0
     )
     default boolean showLastTriggered() { return false; }
+
+    // Debug section
+    @ConfigSection(
+            name = "Debug",
+            description = "Debug and diagnostic settings.",
+            position = 200
+    )
+    String debugSection = "debug";
+
+    @ConfigItem(
+            keyName = "debugCustomMessage",
+            name = "Debug custom messages",
+            description = "Log internal details when sending CUSTOM_MESSAGE (chat type, name split, etc).",
+            section = debugSection,
+            position = 0
+    )
+    default boolean debugCustomMessage(){ return false; }
 }

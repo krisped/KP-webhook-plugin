@@ -84,9 +84,8 @@ public final class KPWebhookInfoContent {
         triggers.put("NPC_SPAWN", new Info("NPC spawns (id / name list).", "NPC_SPAWN 5867"));
         triggers.put("PLAYER_DESPAWN", new Info("Player leaves scene (name / combat filter).", "PLAYER_DESPAWN PlayerName"));
         triggers.put("PLAYER_SPAWN", new Info("Player appears (name / combat filter).", "PLAYER_SPAWN PlayerName"));
-        triggers.put("PROJECTILE_ANY", new Info("Projectile id in list (any direction).", "PROJECTILE_ANY 335"));
-        triggers.put("PROJECTILE_SELF", new Info("Projectile towards you.", "PROJECTILE_SELF 335"));
-        triggers.put("PROJECTILE_TARGET", new Info("Projectile from you to target OR from target to you (direction logic).", "PROJECTILE_TARGET 335"));
+        triggers.put("PROJECTILE_SELF", new Info("Projectile du skyter ut (utgående fra deg) med id i listen.", "PROJECTILE_SELF 335"));
+        triggers.put("PROJECTILE", new Info("Innkommende projectile mot deg (alle tidligere ANY/TARGET varianter). Valgfritt id-filter.", "PROJECTILE 335"));
         triggers.put("STAT", new Info("Skill ABOVE / BELOW / LEVEL_UP threshold (basert på ekte nivå).", "STAT ATTACK ABOVE 90"));
         triggers.put("XP_DROP", new Info("XP total for valgt skill er OVER / UNDER terskel (trigges ved XP endring).", "XP_DROP FISHING ABOVE 1000000"));
         triggers.put("TARGET", new Info("Target acquired or lost.", "TARGET"));

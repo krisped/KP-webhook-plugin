@@ -35,7 +35,8 @@ public class PlayerTriggerService {
     public void onPlayerSpawned(PlayerSpawned ev){
         if(ev==null) return; Player p = ev.getPlayer(); if(p==null) return; KPWebhookPlugin pl = plugin; if(pl==null) return; boolean self = client.getLocalPlayer()==p;
         if(tokenService!=null) try { tokenService.updatePlayerSpawnToken(p,false); } catch(Exception ignored){}
-        // removed debug window logging to avoid dependency on plugin private API
+        // Added: forward to plugin for unified debug logging & interaction tracking
+        try { pl.logPlayerSpawn(false, p); } catch(Exception ignored){}
         List<KPWebhookPreset> rules = pl.getRules();
         for(KPWebhookPreset r: rules){
             if(r==null || !r.isActive()) continue;
@@ -49,7 +50,8 @@ public class PlayerTriggerService {
     public void onPlayerDespawned(PlayerDespawned ev){
         if(ev==null) return; Player p = ev.getPlayer(); if(p==null) return; KPWebhookPlugin pl = plugin; if(pl==null) return; boolean self = client.getLocalPlayer()==p;
         if(tokenService!=null) try { tokenService.updatePlayerSpawnToken(p,true); } catch(Exception ignored){}
-        // removed debug window logging to avoid dependency on plugin private API
+        // Added: forward to plugin for unified debug logging & interaction cleanup
+        try { pl.logPlayerSpawn(true, p); } catch(Exception ignored){}
         List<KPWebhookPreset> rules = pl.getRules();
         for(KPWebhookPreset r: rules){
             if(r==null || !r.isActive()) continue;

@@ -45,7 +45,7 @@ public class KPWebhookDebugWindow extends JFrame {
             "ITEM_SPAWN",
             "MANUAL",
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
-            "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
+            "PROJECTILE","PROJECTILE_SELF",
             "REGION",
             "STAT","TARGET","TARGET_GEAR_CHANGED","TICK","VARBIT","VARPLAYER","WIDGET",
             "XP_DROP"
@@ -300,6 +300,17 @@ public class KPWebhookDebugWindow extends JFrame {
         if(!itemSpawnMatches(rec)) return; // filter out
         logRow("ITEM_SPAWN", String.valueOf(itemId), "ITEM", nz(itemName), "qty="+qty);
     } // new
+    public void logGearChange(String trigger, String playerName, String addedDesc, String removedDesc){
+        // trigger expected: GEAR_CHANGED or TARGET_GEAR_CHANGED
+        if(trigger==null) return; String name = playerName==null?"":playerName;
+        StringBuilder desc = new StringBuilder();
+        if(addedDesc!=null && !addedDesc.isBlank()) desc.append("+"+addedDesc.trim());
+        if(removedDesc!=null && !removedDesc.isBlank()){
+            if(desc.length()>0) desc.append(' ');
+            desc.append("-"+removedDesc.trim());
+        }
+        logRow(trigger, "", "GEAR", nz(name), desc.toString());
+    }
 
     private String build(String base, String detail) { return detail==null||detail.isBlank()? base : base+" "+detail; }
 

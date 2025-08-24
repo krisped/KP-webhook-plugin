@@ -20,7 +20,9 @@ public final class TokenDocumentation {
         m.put("$HITSPLAT_SELF", new String[]{"Last hitsplat on you.", "NOTIFY Self $HITSPLAT_SELF"});
         m.put("$HITSPLAT_TARGET", new String[]{"Last hitsplat on target.", "NOTIFY Target $HITSPLAT_TARGET"});
         m.put("$PLAYER / ${player}", new String[]{"Local player name.", "NOTIFY Hi $PLAYER"});
-        m.put("$TARGET / ${TARGET}", new String[]{"Current target name (may be empty).", "TEXT_OVER TARGET $TARGET"});
+        m.put("$TARGET", new String[]{"Current target name (player or NPC, may be empty).","TEXT_OVER TARGET $TARGET"});
+        m.put("${TARGET_NAME}", new String[]{"Alias for current target name (player or NPC).","NOTIFY Fighting ${TARGET_NAME}"});
+        m.put("TARGET", new String[]{"Location (x,y,plane) of triggering entity (player/NPC/local). Use as ${TARGET} or {{TARGET}}.","WEBHOOK Loc ${TARGET}"});
         m.put("$INTERACTION / ${INTERACTION}", new String[]{"Last player who started interacting with you (Name (Combat)).", "NOTIFY Aggro from $INTERACTION"});
         m.put("$PLAYER_SPAWN / ${PLAYER_SPAWN}", new String[]{"Last player that spawned (Name (Combat)).", "NOTIFY Spawn $PLAYER_SPAWN"});
         m.put("$PLAYER_DESPAWN / ${PLAYER_DESPAWN}", new String[]{"Last player that despawned (Name (Combat)).", "NOTIFY Despawn $PLAYER_DESPAWN"});
@@ -42,6 +44,9 @@ public final class TokenDocumentation {
         m.put("$LOOT_DROP", new String[]{"Name of last loot drop item (after min value filter).", "NOTIFY Loot $LOOT_DROP"});
         m.put("LOOTDROP", new String[]{"Alias of LOOT_DROP (location).", "HIGHLIGHT_TILE LOOT_DROP"});
         m.put("$LOOTDROP", new String[]{"Alias of $LOOT_DROP (item name).", "TEXT_OVER LOOT_DROP $LOOTDROP"});
+        m.put("NPC_SPAWN", new String[]{"World location (x,y,plane) of last NPC that spawned.", "NOTIFY NPC loc ${NPC_SPAWN}"});
+        m.put("$NPC_SPAWN", new String[]{"Name of last NPC that spawned.", "NOTIFY NPC $NPC_SPAWN"});
+        m.put("NPC_SPAWN_NAME", new String[]{"Explicit last NPC spawn name (same as $NPC_SPAWN).", "WEBHOOK Spawned NPC ${NPC_SPAWN_NAME}"});
         return Collections.unmodifiableMap(m);
     }
 }
