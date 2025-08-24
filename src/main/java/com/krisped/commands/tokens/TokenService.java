@@ -37,6 +37,7 @@ public class TokenService {
     private net.runelite.api.coords.WorldPoint lastLootDropPoint = null;
 
     public net.runelite.api.coords.WorldPoint getLastItemSpawnPoint(){ return lastItemSpawnPoint; }
+    public net.runelite.api.coords.WorldPoint getLastLootDropPoint(){ return lastLootDropPoint; }
     public void updateLastItemSpawn(String itemName, net.runelite.api.coords.WorldPoint wp){
         this.lastItemSpawnName = itemName==null?"":itemName.trim();
         this.lastItemSpawnPoint = wp;
@@ -157,6 +158,15 @@ public class TokenService {
         ctx.put("$LOOT_DROP", lastLootDropName);
         ctx.put("LOOT_DROP_NAME", lastLootDropName);
         ctx.put("$LOOT_DROP_NAME", lastLootDropName);
+        // Aliases for ease of use without underscore
+        ctx.put("$LOOTDROP", lastLootDropName); // alias item name
+        ctx.put("LOOTDROP", lootLoc); // location alias (no $)
+        ctx.put("$LOOTDROP_NAME", lastLootDropName);
+        ctx.put("LOOTDROP_LOC", lootLoc);
+        // Also provide ITEM_SPAWN underscore-less aliases for consistency
+        ctx.putIfAbsent("$ITEMSPAWN", itemLoc);
+        ctx.putIfAbsent("ITEMSPAWN", itemLoc);
+        ctx.putIfAbsent("$ITEMSPAWN_NAME", lastItemSpawnName);
         for(Skill s: Skill.values()){
             try {
                 int real = client.getRealSkillLevel(s);

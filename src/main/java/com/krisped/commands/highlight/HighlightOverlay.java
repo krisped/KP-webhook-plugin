@@ -204,6 +204,39 @@ public class HighlightOverlay extends Overlay {
                             }
                         }
                     } catch(Exception ignored){}
+                } else if (h.getTargetType() == ActiveHighlight.TargetType.LOOT_DROP) {
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastLootDropPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        if(h.getType()==HighlightType.TILE || h.getType()==HighlightType.OUTLINE || h.getType()==HighlightType.HULL){
+                                            graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                                            graphics.setColor(h.getColor());
+                                            graphics.draw(poly);
+                                        } else if(h.getType()==HighlightType.LINE){
+                                            Player localPl = client.getLocalPlayer();
+                                            if(localPl!=null){
+                                                LocalPoint lpLocal = localPl.getLocalLocation();
+                                                Polygon polyLocal = lpLocal!=null? Perspective.getCanvasTilePoly(client, lpLocal): null;
+                                                if(polyLocal!=null){
+                                                    Rectangle b1 = polyLocal.getBounds();
+                                                    Rectangle b2 = poly.getBounds();
+                                                    int x1=b1.x+b1.width/2; int y1=b1.y+b1.height/2; int x2=b2.x+b2.width/2; int y2=b2.y+b2.height/2;
+                                                    graphics.setStroke(new BasicStroke(Math.max(1f, h.getWidth())));
+                                                    graphics.setColor(h.getColor());
+                                                    graphics.drawLine(x1,y1,x2,y2);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
                 }
             }
         }
@@ -272,6 +305,22 @@ public class HighlightOverlay extends Overlay {
                             }
                         }
                     } catch(Exception ignored){}
+                } else if (aot.getTargetType()== KPWebhookPlugin.ActiveOverheadText.TargetType.LOOT_DROP) {
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastLootDropPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        Rectangle b = poly.getBounds();
+                                        drawTextAtBounds(graphics, b, aot);
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
                 }
             }
         }
@@ -326,6 +375,22 @@ public class HighlightOverlay extends Overlay {
                     try {
                         if(tokenService!=null){
                             net.runelite.api.coords.WorldPoint wp = tokenService.getLastItemSpawnPoint();
+                            if(wp!=null && wp.getPlane()==client.getPlane()){
+                                LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                                if(lp!=null){
+                                    Polygon poly = Perspective.getCanvasTilePoly(client, lp);
+                                    if(poly!=null){
+                                        Rectangle b = poly.getBounds();
+                                        drawImageAtBounds(graphics, b, oi);
+                                    }
+                                }
+                            }
+                        }
+                    } catch(Exception ignored){}
+                } else if (oi.getTargetType()== ActiveOverheadImage.TargetType.LOOT_DROP) {
+                    try {
+                        if(tokenService!=null){
+                            net.runelite.api.coords.WorldPoint wp = tokenService.getLastLootDropPoint();
                             if(wp!=null && wp.getPlane()==client.getPlane()){
                                 LocalPoint lp = LocalPoint.fromWorld(client, wp);
                                 if(lp!=null){

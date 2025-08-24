@@ -40,6 +40,8 @@ public final class TokenDocumentation {
         m.put("$ITEM_SPAWN", new String[]{"Name of last ground item that spawned.", "TEXT_OVER ITEM_SPAWN $ITEM_SPAWN"});
         m.put("LOOT_DROP", new String[]{"World location (x,y,plane) of last loot drop (matches min value filter).", "TEXT_OVER LOCAL_PLAYER Loot at ${LOOT_DROP}"});
         m.put("$LOOT_DROP", new String[]{"Name of last loot drop item (after min value filter).", "NOTIFY Loot $LOOT_DROP"});
+        m.put("LOOTDROP", new String[]{"Alias of LOOT_DROP (location).", "HIGHLIGHT_TILE LOOT_DROP"});
+        m.put("$LOOTDROP", new String[]{"Alias of $LOOT_DROP (item name).", "TEXT_OVER LOOT_DROP $LOOTDROP"});
         return Collections.unmodifiableMap(m);
     }
 }
