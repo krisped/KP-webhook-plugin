@@ -36,20 +36,19 @@ public class KPWebhookDebugWindow extends JFrame {
     private static class ItemSpawnRecord { final int id; final String name; final int qty; ItemSpawnRecord(int id,String name,int qty){this.id=id; this.name=name==null?"":name; this.qty=qty;} }
 
     private static final String[] TRIGGERS = {
-            // Alphabetical list (extended with projectile and new core triggers)
+            // Alphabetically sorted trigger keys used in debug window
             "ANIMATION_ANY","ANIMATION_SELF","ANIMATION_TARGET",
-            "GEAR_CHANGED","TARGET_GEAR_CHANGED",
+            "GEAR_CHANGED",
             "GRAPHIC_ANY","GRAPHIC_SELF","GRAPHIC_TARGET",
             "HITSPLAT_SELF","HITSPLAT_TARGET",
-            "INTERACTING", // added
-            "ITEM_SPAWN", // new item spawn trigger
-            // removed IDLE
-            "MANUAL", // new
+            "INTERACTING",
+            "ITEM_SPAWN",
+            "MANUAL",
             "MESSAGE","NPC_DESPAWN","NPC_SPAWN","PLAYER_DESPAWN","PLAYER_SPAWN",
             "PROJECTILE_ANY","PROJECTILE_SELF","PROJECTILE_TARGET",
             "REGION",
-            "STAT","TARGET","TICK","VARBIT","VARPLAYER","WIDGET",
-            "XP_DROP" // added
+            "STAT","TARGET","TARGET_GEAR_CHANGED","TICK","VARBIT","VARPLAYER","WIDGET",
+            "XP_DROP"
     };
     private final Set<String> selectedTriggers = new LinkedHashSet<>();
     private final MultiSelectCombo triggerCombo;
@@ -210,6 +209,10 @@ public class KPWebhookDebugWindow extends JFrame {
         String idCol = boosted + "/" + real; // boosted/base
         logRow("STAT", idCol, "STAT", skillName, "");
     }
+    public void logXpDrop(String skillName, int gained){
+        // Added: XP drop logging (gained XP in ID column, skill name in Name)
+        logRow("XP_DROP", String.valueOf(gained), "SKILL", nz(skillName), "");
+    }
     public void logNpcSpawn(boolean despawn, String name, int npcId, int combat) { logRow(despawn?"NPC_DESPAWN":"NPC_SPAWN", String.valueOf(npcId), "NPC", nz(name)+(npcId>0?" ("+npcId+")":""), combat>0?"cb="+combat:""); }
     public void logHitsplat(boolean self, int amount, String actorName) { logRow(self?"HITSPLAT_SELF":"HITSPLAT_TARGET", "", self?"PLAYER":"NPC", nz(actorName), "dmg="+amount); }
     // New overload including Actor reference and target flag
@@ -263,21 +266,35 @@ public class KPWebhookDebugWindow extends JFrame {
     }
     public void logManual(int ruleId, String title) { logRow("MANUAL", String.valueOf(ruleId), "", nz(title), ""); }
     public void logTargetChange(String oldName, String newName) {
+        // Legacy/simple version kept for backward compatibility (no type/id)
         if (newName!=null && !newName.isBlank()) {
             logRow("TARGET", "", "", nz(newName), "");
         } else {
             logRow("TARGET", "", "", "(lost)", "");
         }
     }
-    public void logTickRule(int ruleId, String title) { logRow("TICK", String.valueOf(ruleId), "", nz(title), ""); }
-    public void logGearChange(boolean target, int itemId, String itemName){
-        String name = itemName!=null? itemName:"";
-        String display = name.isEmpty()? ("("+itemId+")") : name + " ("+itemId+")";
-        logRow(target?"TARGET_GEAR_CHANGED":"GEAR_CHANGED", String.valueOf(itemId), "ITEM", display, "");
+    // New: detailed target change with type (PLAYER/NPC) and npc id in parentheses after name
+    public void logTargetChangeActor(Actor a){
+        if(a==null){ logTargetLost(); return; }
+        String type = a instanceof Player? "PLAYER" : a instanceof NPC? "NPC" : "";
+        String name = "";
+        try {
+            if(a instanceof Player){ name = ((Player)a).getName(); }
+            else if(a instanceof NPC){ NPC n=(NPC)a; name = n.getName(); int nid = n.getId(); if(name==null||name.isBlank()) name = nid>0? "("+nid+")" : ""; else if(nid>0) name = name + " ("+nid+")"; }
+        } catch(Exception ignored){}
+        // ID column left blank per requested format (only parentheses in name for NPC)
+        logRow("TARGET", "", type, nz(name), "");
     }
-    public void logXpDrop(String skillName, int gained){ logRow("XP_DROP", String.valueOf(gained), "SKILL", nz(skillName), ""); } // new
-    public void logInteractionPlayer(String playerName, int combat){ logRow("INTERACTING", combat>0?String.valueOf(combat):"", "PLAYER", nz(playerName), ""); } // new
-    public void logInteractionNpc(String npcName, int npcId){ String nm = nz(npcName); if(!nm.isBlank()) nm = nm + (npcId>0?" ("+npcId+")":""); logRow("INTERACTING", npcId>0?String.valueOf(npcId):"", "NPC", nm, ""); } // new
+    public void logTargetLost(){ logRow("TARGET", "", "", "(lost)", ""); }
+    public void logInteractionPlayer(String playerName, int combat){ // remove combat in ID; only show type+name
+        logRow("INTERACTING", "", "PLAYER", nz(playerName), "");
+    }
+    public void logInteractionNpc(String npcName, int npcId){
+        String nm = nz(npcName);
+        if(!nm.isBlank()) nm = nm + (npcId>0?" ("+npcId+")":"");
+        // Blank ID column; npc id only in name parentheses
+        logRow("INTERACTING", "", "NPC", nm, "");
+    } // new
     public void logItemSpawn(int itemId, String itemName, int qty){
         ItemSpawnRecord rec = new ItemSpawnRecord(itemId, itemName, qty);
         if(!itemSpawnMatches(rec)) return; // filter out
